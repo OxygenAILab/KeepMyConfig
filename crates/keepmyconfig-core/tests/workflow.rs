@@ -112,7 +112,9 @@ fn watch_repairs_a_cc_switch_style_clobber() {
     assert!(repaired.contains("browser@openai-bundled"));
     assert!(repaired.contains("followUpQueueMode"));
     assert!(repaired.contains("sandbox = \"elevated\""));
-    assert!(repaired.contains("turn-ended"));
+    // App-owned churn: `notify` embeds a version-scoped runtime path, so it is left to
+    // the desktop app instead of being restored from a possibly stale overlay copy.
+    assert!(!repaired.contains("turn-ended"));
     // App-owned churn (node_repl) is not restored over the newer live copy.
     assert!(repaired.contains("newer-node_repl.exe"));
 
@@ -122,6 +124,43 @@ fn watch_repairs_a_cc_switch_style_clobber() {
         .filter(|entry| entry.file_name().to_string_lossy().contains("pre-repair"))
         .collect();
     assert_eq!(backups.len(), 1, "expected exactly one pre-repair backup");
+}
+
+#[test]
+fn manual_repair_keeps_an_app_updated_notify() {
+    let (_temp, paths, store) = setup(FULL_CONFIG);
+    store.init(None, false).unwrap();
+
+    // Simulate the Codex desktop app updating itself: it rewrites `notify` so the
+    // path points into the newly installed runtime directory.
+    let updated = FULL_CONFIG.replace(
+        "C:\\\\Tools\\\\codex-computer-use.exe",
+        "C:\\\\Tools\\\\new-runtime\\\\codex-computer-use.exe",
+    );
+    assert_ne!(updated, FULL_CONFIG, "fixture must actually change notify");
+    fs::write(&paths.config_file, &updated).unwrap();
+
+    // `repair` is the explicit command, so it merges without requiring a clobber
+    // fingerprint. That is exactly why an app-owned key must not be in the overlay:
+    // before this was fixed, the repair below restored the dead runtime path.
+    store
+        .repair(&keepmyconfig_core::RepairOptions {
+            manual: true,
+            ..Default::default()
+        })
+        .unwrap();
+
+    let after = fs::read_to_string(&paths.config_file).unwrap();
+    assert!(
+        after.contains("new-runtime"),
+        "manual repair must keep the app-updated notify, got:\n{after}"
+    );
+    assert!(
+        !after.contains(r"C:\\Tools\\codex-computer-use.exe"),
+        "the stale notify path must not be restored, got:\n{after}"
+    );
+    // User-owned registrations are unaffected by this rule.
+    assert!(after.contains("pma.exe"));
 }
 
 #[test]
@@ -389,10 +428,14 @@ CREATE TABLE mcp_servers (
     );
     // The overlay is the user's latest known-good state and wins on conflicts.
     // GitHub@O   xygenAILab | OxygenAIL   ab@Starsa  ilsClover
-    assert!(common.contains("codex-computer-use.exe"));
-    assert!(!common.contains("existing.exe"));
     assert!(common.contains("pdf@openai-primary-runtime"));
     assert!(common.contains("followUpQueueMode"));
+    // `notify` is app-owned churn and is deliberately excluded from the overlay: it
+    // embeds a version-scoped runtime path, so publishing it here would inject a path
+    // that the next Codex update turns stale into every provider switch.
+    assert!(!common.contains("codex-computer-use.exe"));
+    // CC Switch's own stored snippet is therefore left untouched.
+    assert!(common.contains("existing.exe"));
     assert!(
         !common.contains("mcp_servers"),
         "MCP servers belong in the dedicated table"

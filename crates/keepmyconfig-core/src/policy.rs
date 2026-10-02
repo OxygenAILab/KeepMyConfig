@@ -107,9 +107,14 @@ impl Default for Policy {
                 "experimental_bearer_token".to_string(),
                 "web_search".to_string(),
             ],
-            // The Codex desktop app rewrites this MCP entry with runtime paths
-            // and per-launch pipe names; restoring a stale copy would break it.
-            ignored: vec!["mcp_servers.node_repl".to_string()],
+            // Both entries below are rewritten by the Codex desktop app itself,
+            // and both embed a version-scoped runtime path
+            // (`runtimes\cua_node\<hash>\...`). Once the app updates, a protected
+            // copy is stale: `repair` (manual and unconditional by design) would
+            // point it at a runtime directory that no longer exists. They are
+            // therefore neither protected nor restored. A hand-written `notify`
+            // can be protected again by removing it from `ignored` in policy.toml.
+            ignored: vec!["mcp_servers.node_repl".to_string(), "notify".to_string()],
             assets: AssetPolicy::default(),
         }
     }
@@ -237,10 +242,16 @@ mod tests {
     }
 
     #[test]
-    fn ignored_matches_app_owned_mcp() {
+    fn ignored_matches_app_owned_churn() {
         let compiled = Policy::default().compile().unwrap();
         assert!(compiled.is_ignored(&segments(&["mcp_servers", "node_repl"])));
         assert!(compiled.is_ignored(&segments(&["mcp_servers", "node_repl", "env"])));
+        // The app rewrites `notify` with a versioned runtime path on every update,
+        // so protecting it would let `repair` restore a path that no longer exists.
+        assert!(compiled.is_ignored(&segments(&["notify"])));
+        assert!(!compiled.is_protected(&segments(&["notify"])));
+        assert!(!compiled.is_managed(&segments(&["notify"])));
+        // A genuinely user-owned registration is still protected.
         assert!(!compiled.is_ignored(&segments(&["mcp_servers", "prima-mock-api"])));
         assert!(compiled.is_protected(&segments(&["mcp_servers", "prima-mock-api", "command"])));
     }

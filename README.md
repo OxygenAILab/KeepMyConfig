@@ -43,9 +43,15 @@ switches carry it natively.
 | `[mcp_servers.*]` (except app-managed `node_repl`) | `model`, `model_provider` |
 | `[plugins.*]`, `[marketplaces.*]` | `[model_providers.*]`, `model_catalog_json` |
 | `[desktop]`, `[windows]`, `[features]`, `[projects.*]` | `experimental_bearer_token`, `web_search` |
-| `notify`, reasoning effort, context limits, other settings | |
+| reasoning effort, context limits, other settings | |
 <!-- GitHub@ OxygenAILab | OxygenAILab@StarsailsClo   ver -->
 | Asset backups: `config.toml`, `AGENTS.md`, `skills/`, `plugins/`, `prompts/`, `rules/` | `auth.json` is backed up but never merged or auto-restored |
+
+Neither protected nor restored: `mcp_servers.node_repl` and `notify`. The desktop app
+rewrites both with a version-scoped runtime path (`runtimes\cua_node\<hash>\...`), so an
+overlay copy captured before an app update is stale — and an explicit `repair` merges
+unconditionally, which would point the key at a runtime directory that no longer exists.
+Remove either key from `ignored` in `policy.toml` if you maintain it by hand.
 
 Provider identity is deliberately excluded so switching providers still works;
 you keep the provider's model while your own configuration comes back.
@@ -165,4 +171,3 @@ Release build: `scripts\build_release.ps1`.
 MIT
 
 GitHub@OxygenAILab | OxygenAILab@StarsailsClover
-
