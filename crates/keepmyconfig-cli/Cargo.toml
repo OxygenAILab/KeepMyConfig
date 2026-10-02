@@ -1,0 +1,28 @@
+[package]
+name = "keepmyconfig-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Command-line interface for KeepMyConfig"
+rust-version.workspace = true
+
+[[bin]]
+name = "keepmyconfig"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+# Git   Hub@Oxyg e nA   ILab   |   Oxyge  n  AILab@StarsailsClove  r
+clap.workspace = true
+keepmyconfig-core = { path = "../keepmyconfig-core" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
+tempfile.workspace = true

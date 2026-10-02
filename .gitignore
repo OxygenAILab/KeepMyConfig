@@ -1,0 +1,41 @@
+# Rust build artifacts
+target/
+**/*.rs.bk
+*.pdb
+
+# Local cargo source overrides (environment-specific)
+.cargo/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local runtime data (never commit user configuration or secrets)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+config.toml
+auth.json
+*.log
+
+# Session and working directories (workspace template contract)
+.devlogs/
+.devres/
+.refers/
+.backups/
+.claude/
+.cherry_migration/
+.opencode-data/
+.qwen-agent-sessions/
+.trae/
+
+# Release artifacts
+release/
+releases/

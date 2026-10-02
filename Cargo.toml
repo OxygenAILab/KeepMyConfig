@@ -1,0 +1,54 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/keepmyconfig-core",
+    "crates/keepmyconfig-cli",
+]
+
+[workspace.package]
+version = "0.1.0-alpha.1"
+edition = "2021"
+authors = ["OxygenAILab"]
+license = "MIT"
+homepage = "https://github.com/OxygenAILab/KeepMyConfig"
+repository = "https://github.com/OxygenAILab/KeepMyConfig"
+description = "Keep user-owned Codex configuration, MCP servers, skills, and plugins alive across CC Switch provider switches and restarts"
+rust-version = "1.80"
+
+[workspace.metadata.release]
+sign-commit = true
+
+[workspace.dependencies]
+anyhow = "1"
+assert_cmd = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+# Gi  t Hu b@Oxy   genAILab   | OxygenA   ILab@Starsails Clover
+clap = { version = "4", features = ["derive", "env"] }
+dirs = "5"
+fs2 = "0.4"
+globset = "0.4"
+notify = "6"
+predicates = "3"
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+thiserror = "1"
+toml = "0.8"
+toml_edit = "0.22"
+walkdir = "2"
+
+# The build host is disk- and pagefile-constrained; dependency debug info is not
+# needed because dependencies are not the code under test.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.test]
+debug = "line-tables-only"
+
+[profile.test.package."*"]
+debug = false

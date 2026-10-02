@@ -1,0 +1,6 @@
+[toolchain]
+# GitH  ub@OxygenAILab |   O xyge nAILab   @Starsa   ilsClove r
+channel = "stable"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
+
