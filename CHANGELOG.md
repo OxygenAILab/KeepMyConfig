@@ -7,6 +7,28 @@ and this project adheres to the BC version scheme (`v{Year}.{Major}-Alpha N`).
 
 ## [Unreleased]
 
+## [v26.0-Alpha.3] — 2026-10-03
+
+### Fixed
+
+- `notify` is no longer captured into the protected overlay. The Codex desktop app
+  rewrites it with a version-scoped runtime path (`runtimes\cua_node\<hash>\...`), so
+  any copy captured before an app update is stale. The explicit `repair` command is
+  `manual = true` and therefore merges without requiring a clobber fingerprint, which
+  meant `status` reporting a benign `Edit` (score 1, threshold 4) still led the user to
+  a `repair` that silently rewrote `notify` back to a runtime directory that no longer
+  exists — breaking the `turn-ended` Computer Use hook. `notify` now sits in the
+  default `ignored` set alongside `mcp_servers.node_repl`, which shares the same
+  lifecycle. Remove it from `ignored` in `policy.toml` to protect a hand-written value.
+
+### Verified
+
+- Recorded reproduction of the defect: baseline `notify` -> runtime
+  `2134bcb1950af07e`, live `notify` -> runtime `81ea4d5168ddd0a3` (app update),
+  `repair` -> `overwritten notify`, runtime `2134bcb1950af07e` restored.
+- Regression test `manual_repair_keeps_an_app_updated_notify`, plus the existing
+  `watch_repairs_a_cc_switch_style_clobber` now asserts app-owned churn is left alone.
+
 ## [v26.0-Alpha.2] — 2026-10-02
 
 ### Fixed

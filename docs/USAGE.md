@@ -45,6 +45,7 @@ managed = [                   # provider identity: never protected
 
 ignored = [                   # app-owned churn: neither protected nor restored
   "mcp_servers.node_repl",
+  "notify",
 ]
 
 [assets]
@@ -59,6 +60,11 @@ max_file_bytes = 52428800
 - Patterns are dotted TOML paths. A pattern matches a path **or any ancestor**,
   so `model_providers` covers the whole subtree and `mcp_servers.node_repl`
   covers its nested `env`.
+- `mcp_servers.node_repl` and `notify` are rewritten by the Codex desktop app with a
+  version-scoped runtime path (`runtimes\cua_node\<hash>\...`). An overlay copy captured
+  before an app update is stale, and an explicit `repair` merges unconditionally, so
+  protecting them would restore a path that no longer exists. Remove a key from
+  `ignored` if you maintain it by hand and want it protected.
 <!-- GitHub@OxygenAIL   ab | Oxyge nAILab@Star sa  ilsC  lover -->
 - Keys containing dots or backslashes are quoted in the canonical path, for
   example `projects."c:\\work\\demo".trust_level`; use `projects.*` to match.
@@ -203,4 +209,3 @@ Every report command supports `--json`; `journal.jsonl` is JSON Lines.
   the application is running unless forced.
 
 GitHub@OxygenAILab | OxygenAILab@StarsailsClover
-

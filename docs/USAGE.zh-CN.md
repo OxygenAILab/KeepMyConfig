@@ -37,6 +37,7 @@ managed = [                   # 供应商标识：不保护，永远取 live
 
 ignored = [                   # 应用自管高频变化：不保护也不恢复
   "mcp_servers.node_repl",
+  "notify",
 ]
 
 [assets]
@@ -49,6 +50,10 @@ max_file_bytes = 52428800
 ```
 
 - 规则是点分 TOML 路径；匹配路径**及其所有子路径**，如 `model_providers` 覆盖整表。
+- `mcp_servers.node_repl` 与 `notify` 由 Codex 桌面应用写入，内含随版本变化的
+  runtime 路径（`runtimes\cua_node\<hash>\...`）。App 更新后 overlay 里的副本即失效，
+  而显式 `repair` 会无条件合并，因此保护它们等于把死路径写回去；两者默认忽略。
+  若你手工维护并希望保护，请把它从 `ignored` 中移除。
 - 含点或反斜杠的键在路径里带引号，例如
   `projects."c:\\work\\demo".trust_level`；可用 `projects.*` 匹配。
 - `overlay_wins`（默认）在冲突时恢复你的值；`live_wins` 尊重新写入。
@@ -183,4 +188,3 @@ adopt 按表结构（`settings`、`providers`、`mcp_servers`）校验数据库�
 - CC Switch 数据库写入必须显式 `--apply`，先备份，运行中除非 `--force` 否则拒绝。
 
 GitHub@OxygenAILab | OxygenAILab@StarsailsClover
-

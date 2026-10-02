@@ -39,8 +39,13 @@ CC Switch 自己的数据库，让它今后的每次切换都原生带上你的�
 | `[mcp_servers.*]`（应用自管的 `node_repl` 除外） | `model`、`model_provider` |
 | `[plugins.*]`、`[marketplaces.*]` | `[model_providers.*]`、`model_catalog_json` |
 | `[desktop]`、`[windows]`、`[features]`、`[projects.*]` | `experimental_bearer_token`、`web_search` |
-| `notify`、推理强度、上下文上限等设置项 | |
+| 推理强度、上下文上限等设置项 | |
 | 资产备份：`config.toml`、`AGENTS.md`、`skills/`、`plugins/`、`prompts/`、`rules/` | `auth.json` 只备份，绝不自动合并或恢复 |
+
+既不保护也不恢复：`mcp_servers.node_repl` 与 `notify`。这两项由 Codex 桌面应用写入，
+内含随版本变化的 runtime 路径（`runtimes\cua_node\<hash>\...`）；App 更新后 overlay 里的
+副本即失效，而显式 `repair` 会无条件合并，等于把死路径写回去。若你手工维护并希望保护，
+请把它从 `policy.toml` 的 `ignored` 中移除。
 
 供应商标识被刻意排除，因此切换供应商仍然有效：模型跟随供应商，其余配置回归你自己。
 
@@ -151,4 +156,3 @@ cargo test --workspace
 MIT
 
 GitHub@OxygenAILab | OxygenAILab@StarsailsClover
-
