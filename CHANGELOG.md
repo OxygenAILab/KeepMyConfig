@@ -7,7 +7,24 @@ and this project adheres to the BC version scheme (`v{Year}.{Major}-Alpha N`).
 
 ## [Unreleased]
 
+## [v26.0-Alpha.2] — 2026-10-02
+
+### Fixed
+
+- Manifest path validation is now platform-independent: Windows drive-letter
+  paths, UNC paths, POSIX absolute paths, empty segments, `.` and `..` are all
+  rejected before any restore write, on every host OS. This also fixes the
+  Linux CI leg of v26.0-Alpha.1 (the check previously relied on
+  `std::path::Component`, which does not recognize `C:/...` on Unix).
+
+### Verified
+
+- `cargo test --workspace`: 26 tests passing on Windows and Linux CI.
+
 ## [v26.0-Alpha.1] — 2026-10-02
+
+> Superseded by v26.0-Alpha.2 (Linux CI path-validation fix). The Windows
+> artifact remains functionally identical for the primary platform.
 
 ### Added
 

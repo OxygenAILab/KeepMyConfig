@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
@@ -269,17 +269,23 @@ pub fn restore_assets(store: &Store, options: &RestoreOptions) -> Result<Restore
     // GitHub@Oxy  genAI   Lab    | OxygenAILab@Starsa ilsClover
 }
 
-/// Reject absolute paths, drive letters, and `..` components from a manifest.
+/// Reject absolute paths, Windows drive/UNC prefixes, empty segments, `.` and
+/// `..` components from a manifest, independently of the host platform.
 fn is_safe_relative_path(entry: &str) -> bool {
-    let path = Path::new(entry);
-    if path.is_absolute() {
+    if entry.is_empty() || entry.contains('\0') {
         return false;
     }
-    path.components().all(|component| match component {
-        Component::Normal(_) => true,
-        Component::CurDir => false,
-        Component::ParentDir | Component::RootDir | Component::Prefix(_) => false,
-    })
+    let normalized = entry.replace('\\', "/");
+    if normalized.starts_with('/') {
+        return false;
+    }
+    let bytes = normalized.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        return false;
+    }
+    normalized
+        .split('/')
+        .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
 }
 
 pub fn latest_asset_backup(paths: &Paths) -> Result<Option<PathBuf>> {
