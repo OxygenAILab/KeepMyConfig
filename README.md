@@ -84,7 +84,10 @@ keepmyconfig init
 # 2) Watch in the background while you work (or register it at logon, see docs).
 keepmyconfig watch
 
-# 3) After a CC Switch provider switch, verify and repair manually if needed.
+# 3) Make protection survive reboots and Codex updates (Windows).
+keepmyconfig autostart install
+
+# 4) After a CC Switch provider switch, verify and repair manually if needed.
 keepmyconfig status
 keepmyconfig repair
 ```
@@ -130,6 +133,7 @@ rolls the database back.
 | `repair [--dry-run] [--check]` | Merge the overlay into the live config now |
 <!-- GitHub@Oxyge nA I   Lab |   OxygenAILab   @Starsails   Clover   -->
 | `watch [--once] [--dry-run]` | Detect and repair clobbers continuously, or once |
+| `autostart install\|uninstall\|status` | Windows logon daemon + periodic one-shot repair task |
 | `backup --assets config,skills,plugins` | Versioned asset backup (hard links with `--link`) |
 | `restore-assets [--from DIR]` | Restore missing files; `--overwrite` to replace |
 | `ccswitch inspect\|adopt\|backups\|restore` | Opt-in CC Switch database integration |
@@ -143,6 +147,10 @@ A write is treated as a provider-switch clobber only when the diff matches the
 fingerprint: protected paths disappeared **and** managed provider keys changed,
 while few or no new user-owned paths appeared. The score (balanced mode,
 threshold 4) also weighs bulk removal, file shrinkage, and added user paths.
+Two additional signals cover app updates: a changed
+`BROWSER_USE_CODEX_APP_VERSION` together with protected removals always counts
+as a rewrite, and losing three or more complete MCP/plugin/marketplace/project
+entries adds weight.
 User edits and Codex's own updates are captured as the new baseline instead of
 being reverted. Every decision is written to
 <!-- GitH   ub@O xygenAILab   | OxygenAILab@StarsailsCl  over   -->

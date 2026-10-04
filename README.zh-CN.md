@@ -76,7 +76,10 @@ keepmyconfig init
 # 2) 后台守护（或配置开机自启，见文档）
 keepmyconfig watch
 
-# 3) CC Switch 切换后检查；必要时手动修复
+# 3) 让保护在重启与 Codex 更新后继续生效（Windows）
+keepmyconfig autostart install
+
+# 4) CC Switch 切换后检查；必要时手动修复
 keepmyconfig status
 keepmyconfig repair
 ```
@@ -118,6 +121,7 @@ keepmyconfig ccswitch adopt --apply
 | `diff` | 路径级对比 live 与基线 |
 | `repair [--dry-run] [--check]` | 立即把覆盖层合并回 live |
 | `watch [--once] [--dry-run]` | 持续检测并修复（或只跑一轮） |
+| `autostart install\|uninstall\|status` | Windows 登录守护 + 周期性单次修复任务 |
 | `backup --assets config,skills,plugins` | 版本化资产备份（`--link` 用硬链接） |
 | `restore-assets [--from DIR]` | 恢复缺失文件；`--overwrite` 覆盖 |
 | `ccswitch inspect\|adopt\|backups\|restore` | 可选的 CC Switch 数据库集成 |
@@ -129,6 +133,9 @@ keepmyconfig ccswitch adopt --apply
 
 只有同时满足“受保护路径消失”与“供应商托管键变化”，且几乎没有新增用户路径时，才会被
 判定为供应商切换覆写。评分（balanced 模式阈值 4）还包括批量删除、文件缩小与新增用户
+路径。另有两条针对应用更新的信号：`BROWSER_USE_CODEX_APP_VERSION` 变化且受保护路径
+消失时必定视为整文件重写；一次丢掉 3 个及以上完整的 MCP/Plugin/Marketplace/Project
+条目会显著加分。
 路径。用户编辑与 Codex 自身更新会被采集为新基线，而不会被回滚。每次判定及证据都会写入
 `~/.codex/.keepmyconfig/journal.jsonl`。
 

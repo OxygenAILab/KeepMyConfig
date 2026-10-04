@@ -114,6 +114,22 @@ keepmyconfig repair --dry-run # show what would be restored
 keepmyconfig repair
 ```
 
+### Surviving reboots and Codex updates (Windows)
+
+```powershell
+keepmyconfig autostart install            # logon daemon + check every 5 minutes
+keepmyconfig autostart install --interval-minutes 10
+keepmyconfig autostart install --no-daemon
+keepmyconfig autostart status
+keepmyconfig autostart uninstall
+```
+
+`install` writes two wrapper scripts next to `keepmyconfig.exe`, registers
+`KeepMyConfig-Watch` (runs `watch` at logon) and `KeepMyConfig-Check` (runs
+`watch --once --quiet` on a schedule) with the current-user Task Scheduler, and
+starts both once immediately. The periodic task keeps repairing even if the
+daemon is killed by an app update or a reboot.
+
 ### Recovering from an existing loss
 
 ```powershell
@@ -175,6 +191,8 @@ everything in one transaction after taking a consistent SQLite backup.
 | managed provider keys changed | +2 |
 | no new user-owned paths | +1 (1–5 new: 0, more: −1) |
 | file shrank by ≥30% | +1 |
+| three or more complete MCP/plugin/marketplace/project entries removed | +2 |
+| `BROWSER_USE_CODEX_APP_VERSION` changed **and** protected paths were removed | forced clobber |
 
 `balanced` repairs at ≥4, `strict` at ≥3, `off` never auto-repairs.
 

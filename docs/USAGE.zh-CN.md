@@ -98,6 +98,21 @@ keepmyconfig repair --dry-run
 keepmyconfig repair
 ```
 
+### 在重启与 Codex 更新后继续生效（Windows）
+
+```powershell
+keepmyconfig autostart install            # 登录守护 + 每 5 分钟检查
+keepmyconfig autostart install --interval-minutes 10
+keepmyconfig autostart install --no-daemon
+keepmyconfig autostart status
+keepmyconfig autostart uninstall
+```
+
+`install` 会在 `keepmyconfig.exe` 旁写两个包装脚本，注册
+`KeepMyConfig-Watch`（登录时运行 `watch`）与 `KeepMyConfig-Check`（按计划运行
+`watch --once --quiet`）两个当前用户计划任务，并立即各启动一次。即使守护进程被应用
+更新或重启杀掉，周期任务也会持续修复。
+
 ### 已经丢失配置的抢救
 
 ```powershell
@@ -156,6 +171,8 @@ adopt 按表结构（`settings`、`providers`、`mcp_servers`）校验数据库�
 | 供应商托管键发生变化 | +2 |
 | 无新增用户路径 | +1（1–5 个：0；更多：−1） |
 | 文件缩小 ≥30% | +1 |
+| 一次删除 3 个及以上完整的 MCP/Plugin/Marketplace/Project 条目 | +2 |
+| `BROWSER_USE_CODEX_APP_VERSION` 变化且受保护路径消失 | 必定判定为覆写 |
 
 `balanced` 阈值 4，`strict` 阈值 3，`off` 从不自动修复。
 

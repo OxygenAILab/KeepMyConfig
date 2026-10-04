@@ -7,6 +7,42 @@ and this project adheres to the BC version scheme (`v{Year}.{Major}-Alpha N`).
 
 ## [Unreleased]
 
+## [v26.0-Alpha.4] — 2026-10-05
+
+### Added
+
+- `autostart install|uninstall|status` (Windows): installs a logon daemon
+  (`KeepMyConfig-Watch`) plus a periodic one-shot repair task
+  (`KeepMyConfig-Check`, five-minute default) through `schtasks`, using small
+  wrapper scripts next to the executable. `doctor` now reports autostart state.
+  This closes the gap that let an update kill the manually started watch and
+  leave the configuration unprotected.
+- Codex-update-aware rewrite detection: a change of
+  `mcp_servers.node_repl.env.BROWSER_USE_CODEX_APP_VERSION` combined with any
+  protected-path removal is treated as an app-rewrite clobber, and the removal
+  of three or more complete `mcp_servers` / `plugins` / `marketplaces` /
+  `projects` entries adds clobber weight.
+
+### Fixed
+
+- A Codex app update that rewrites `config.toml` while preserving provider
+  identity no longer scores below the clobber threshold. The observed 0.147
+  rewrite (app build `26.930.31428` -> `26.930.31730`) dropped three MCP
+  servers, four curated plugin entries, and reset reasoning effort while
+  introducing `desktop.conversationDetailMode`; the old score was 3 against a
+  threshold of 4, so `watch` would have captured the damage as a user edit.
+
+### Verified
+
+- Real incident recovery on 2026-10-05: `status --check` exited 2 with 12
+  missing protected paths and one changed value; `repair` restored all 12 and
+  rewrote `model_reasoning_effort` to the user value, leaving a pre-repair
+  backup. `status --check` returned 0 afterwards.
+- New regression tests: an app-update rewrite is a clobber; an app update with
+  no losses is an edit; three complete entries removed is a clobber; a single
+  entry removal remains an edit; the end-to-end `process()` test repairs the
+  0.147-style rewrite instead of capturing it.
+
 ## [v26.0-Alpha.3] — 2026-10-03
 
 ### Fixed

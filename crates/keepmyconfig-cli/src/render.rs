@@ -1,3 +1,4 @@
+use crate::autostart::{AutostartReport, AutostartStatus};
 use keepmyconfig_core::assets::{BackupReport, RestoreReport};
 use keepmyconfig_core::ccswitch::{AdoptReport, CcSwitchSummary, RestoreDbReport};
 use keepmyconfig_core::store::{CaptureReport, InitReport, RepairReport, StatusReport};
@@ -134,6 +135,12 @@ pub fn status_text(report: &StatusReport) -> String {
             text.push_str(&format!(
                 "  changed  : {}\n",
                 summarize_paths(&diff.changed_protected, 6)
+            ));
+        }
+        if !diff.whole_entries_removed.is_empty() {
+            text.push_str(&format!(
+                "  entries  : {}\n",
+                summarize_paths(&diff.whole_entries_removed, 6)
             ));
         }
     }
@@ -310,6 +317,37 @@ pub fn restore_db_text(report: &RestoreDbReport) -> String {
 
 pub fn watch_text(event: &WatchEvent) -> String {
     render_event(event)
+}
+
+pub fn autostart_text(report: &AutostartReport) -> String {
+    let mut text = format!("autostart {}\n", report.action);
+    for detail in &report.details {
+        text.push_str(&format!("  {detail}\n"));
+    }
+    if !report.status.supported {
+        text.push_str("  (autostart management is Windows-only)\n");
+    }
+    text.push_str(&autostart_status_text(&report.status));
+    text
+}
+
+pub fn autostart_status_text(status: &AutostartStatus) -> String {
+    format!(
+        "  executable : {}\n  watch task : {}\n  check task : {}\n  wrappers   : {}\n               {}\n",
+        status.executable.display(),
+        yes_no(status.watch_task_installed),
+        yes_no(status.check_task_installed),
+        status.watch_wrapper.display(),
+        status.check_wrapper.display()
+    )
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value {
+        "installed"
+    } else {
+        "not installed"
+    }
 }
 
 pub fn human_bytes(bytes: u64) -> String {
