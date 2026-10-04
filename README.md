@@ -86,6 +86,8 @@ keepmyconfig watch
 
 # 3) Make protection survive reboots and Codex updates (Windows).
 keepmyconfig autostart install
+# or choose a mechanism explicitly:
+# keepmyconfig autostart install --method task|startup
 
 # 4) After a CC Switch provider switch, verify and repair manually if needed.
 keepmyconfig status

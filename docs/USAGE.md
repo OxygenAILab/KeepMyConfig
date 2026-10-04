@@ -119,6 +119,7 @@ keepmyconfig repair
 ```powershell
 keepmyconfig autostart install            # logon daemon + check every 5 minutes
 keepmyconfig autostart install --interval-minutes 10
+keepmyconfig autostart install --method auto|task|startup
 keepmyconfig autostart install --no-daemon
 keepmyconfig autostart status
 keepmyconfig autostart uninstall
@@ -128,7 +129,10 @@ keepmyconfig autostart uninstall
 `KeepMyConfig-Watch` (runs `watch` at logon) and `KeepMyConfig-Check` (runs
 `watch --once --quiet` on a schedule) with the current-user Task Scheduler, and
 starts both once immediately. The periodic task keeps repairing even if the
-daemon is killed by an app update or a reboot.
+daemon is killed by an app update or a reboot. When the host denies Task
+Scheduler creation (common for non-elevated sessions), `auto` falls back to a
+Startup-folder loop that runs a one-shot repair every N minutes; use
+`--method startup` to select that path directly.
 
 ### Recovering from an existing loss
 

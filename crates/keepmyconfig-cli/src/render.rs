@@ -332,11 +332,27 @@ pub fn autostart_text(report: &AutostartReport) -> String {
 }
 
 pub fn autostart_status_text(status: &AutostartStatus) -> String {
+    let startup = status
+        .startup_script
+        .as_deref()
+        .map(|path| {
+            format!(
+                "{} ({})",
+                path.display(),
+                if status.startup_script_installed {
+                    "installed"
+                } else {
+                    "not installed"
+                }
+            )
+        })
+        .unwrap_or_else(|| "-".to_string());
     format!(
-        "  executable : {}\n  watch task : {}\n  check task : {}\n  wrappers   : {}\n               {}\n",
+        "  executable : {}\n  watch task : {}\n  check task : {}\n  startup    : {}\n  wrappers   : {}\n               {}\n",
         status.executable.display(),
         yes_no(status.watch_task_installed),
         yes_no(status.check_task_installed),
+        startup,
         status.watch_wrapper.display(),
         status.check_wrapper.display()
     )

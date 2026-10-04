@@ -78,6 +78,8 @@ keepmyconfig watch
 
 # 3) 让保护在重启与 Codex 更新后继续生效（Windows）
 keepmyconfig autostart install
+# 也可显式选择机制：
+# keepmyconfig autostart install --method task|startup
 
 # 4) CC Switch 切换后检查；必要时手动修复
 keepmyconfig status
