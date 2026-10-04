@@ -1,3 +1,4 @@
+mod autostart;
 mod render;
 
 use std::path::PathBuf;
@@ -143,6 +144,12 @@ enum Command {
 
     /// Check the environment and report compatibility
     Doctor,
+
+    /// Install or inspect logon/periodic self-healing tasks (Windows)
+    Autostart {
+        #[command(subcommand)]
+        command: AutostartCommand,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -172,6 +179,23 @@ enum CcSwitchCommand {
         #[arg(long)]
         force: bool,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum AutostartCommand {
+    /// Install a logon daemon plus a periodic one-shot repair task
+    Install {
+        /// Periodic repair interval in minutes
+        #[arg(long, default_value_t = 5)]
+        interval_minutes: u64,
+        /// Only install the periodic check (no long-running daemon)
+        #[arg(long)]
+        no_daemon: bool,
+    },
+    /// Remove the scheduled tasks and wrapper scripts
+    Uninstall,
+    /// Show whether the tasks are installed
+    Status,
 }
 
 fn main() -> ExitCode {
@@ -294,7 +318,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     return;
                 }
                 if !printed_started {
-                    eprintln!("Press Ctrl+C to stop.");
+                    if !options.once {
+                        eprintln!("Press Ctrl+C to stop.");
+                    }
                     printed_started = true;
                 }
                 println!("{}", render::watch_text(event));
@@ -338,7 +364,30 @@ fn run(cli: Cli) -> Result<ExitCode> {
         }
         Command::Ccswitch { command } => run_ccswitch(&store, command, json),
         Command::Doctor => run_doctor(&store, json),
+        Command::Autostart { command } => run_autostart(&store, command, json),
     }
+}
+
+fn run_autostart(store: &Store, command: AutostartCommand, json: bool) -> Result<ExitCode> {
+    match command {
+        AutostartCommand::Install {
+            interval_minutes,
+            no_daemon,
+        } => {
+            let report = autostart::install(store, interval_minutes, no_daemon)
+                .context("cannot install autostart tasks")?;
+            print_value(json, &report, render::autostart_text(&report))?;
+        }
+        AutostartCommand::Uninstall => {
+            let report = autostart::uninstall(store).context("cannot remove autostart tasks")?;
+            print_value(json, &report, render::autostart_text(&report))?;
+        }
+        AutostartCommand::Status => {
+            let status = autostart::status(store).context("cannot read autostart status")?;
+            print_value(json, &status, render::autostart_status_text(&status))?;
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn run_ccswitch(store: &Store, command: CcSwitchCommand, json: bool) -> Result<ExitCode> {
@@ -480,6 +529,25 @@ fn run_doctor(store: &Store, json: bool) -> Result<ExitCode> {
             "not installed (optional)".to_string(),
         )),
         Err(error) => checks.push(check("cc_switch", false, error.to_string())),
+    }
+    match autostart::status(store) {
+        Ok(status) if !status.supported => checks.push(check_status(
+            "autostart",
+            "warn",
+            "not supported on this platform (use a systemd user unit on Linux)".to_string(),
+        )),
+        Ok(status) => {
+            let installed = status.watch_task_installed || status.check_task_installed;
+            checks.push(check_status(
+                "autostart",
+                if installed { "ok" } else { "warn" },
+                format!(
+                    "watch task: {}, periodic check: {}",
+                    status.watch_task_installed, status.check_task_installed
+                ),
+            ));
+        }
+        Err(error) => checks.push(check_status("autostart", "warn", error.to_string())),
     }
     let failed = checks.iter().any(|entry| entry.status == "fail");
     let report = DoctorReport {

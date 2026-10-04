@@ -330,6 +330,76 @@ fn restore_skips_manifest_entries_that_escape_the_codex_home() {
 }
 
 #[test]
+fn codex_update_rewrite_is_repaired_not_captured() {
+    let baseline = r#"model = "deepseek-v4.1-flash"
+model_provider = "SailsAPI"
+model_reasoning_effort = "max"
+
+[mcp_servers.node_repl]
+command = "node_repl.exe"
+
+[mcp_servers.node_repl.env]
+BROWSER_USE_CODEX_APP_VERSION = "26.930.31428"
+CODEX_CLI_PATH = 'C:\\.codex\\bin\\old\\codex.exe'
+
+[mcp_servers.cu_bridge]
+command = "node.exe"
+args = ["server.mjs"]
+
+[mcp_servers.prima-mock-api]
+command = "pma.exe"
+args = ["serve", "--mcp"]
+
+[mcp_servers.wsl-cu]
+command = "node"
+args = ["server.mjs"]
+
+[plugins."figma@openai-api-curated"]
+enabled = true
+
+[plugins."linear@openai-api-curated"]
+enabled = true
+
+[desktop]
+followUpQueueMode = "queue"
+"#;
+    let upgraded = r#"model = "deepseek-v4.1-flash"
+model_provider = "SailsAPI"
+model_reasoning_effort = "high"
+
+[mcp_servers.node_repl]
+command = "node_repl.exe"
+
+[mcp_servers.node_repl.env]
+BROWSER_USE_CODEX_APP_VERSION = "26.930.31730"
+CODEX_CLI_PATH = 'C:\\.codex\\bin\\new\\codex.exe'
+
+[desktop]
+followUpQueueMode = "queue"
+conversationDetailMode = "STEPS_COMMANDS"
+"#;
+    let (_temp, paths, store) = setup(baseline);
+    store.init(None, false).unwrap();
+    fs::write(&paths.config_file, upgraded).unwrap();
+
+    let outcome = store.process(false).unwrap();
+    assert!(
+        matches!(outcome, ProcessOutcome::Repaired(_)),
+        "a Codex update rewrite must be repaired, not captured: {outcome:?}"
+    );
+
+    let repaired = fs::read_to_string(&paths.config_file).unwrap();
+    assert!(repaired.contains("cu_bridge"));
+    assert!(repaired.contains("pma.exe"));
+    assert!(repaired.contains("wsl-cu"));
+    assert!(repaired.contains("figma@openai-api-curated"));
+    assert!(repaired.contains("model_reasoning_effort = \"max\""));
+    // The new app build keeps its own updated runtime paths and new keys.
+    assert!(repaired.contains("26.930.31730"));
+    assert!(repaired.contains("conversationDetailMode"));
+}
+
+#[test]
 // GitHu   b@O  xygenAIL ab | O  xygen AILab@StarsailsC  lover
 fn cc_switch_adopt_publishes_common_config_providers_and_mcp() {
     let (_temp, _paths, store) = setup(FULL_CONFIG);
