@@ -7,6 +7,27 @@ and this project adheres to the BC version scheme (`v{Year}.{Major}-Alpha N`).
 
 ## [Unreleased]
 
+## [v26.0-Alpha.5] — 2026-10-05
+
+### Fixed
+
+- `autostart install` no longer fails when the host denies Task Scheduler task
+  creation (observed on a non-elevated session: `schtasks /Create /SC ONLOGON`
+  returned `Access is denied`). `--method auto` now falls back to a Startup
+  folder loop script that runs `watch --once --quiet` every N minutes, so
+  protection survives logons and app updates without administrator rights.
+
+### Added
+
+- `autostart install --method auto|task|startup`, plus Startup-script state in
+  `autostart status` and `doctor`.
+
+### Verified
+
+- On the affected machine the fallback script was installed under the user's
+  Startup folder, a watch helper was started immediately, and the store journal
+  recorded the periodic one-shot run.
+
 ## [v26.0-Alpha.4] — 2026-10-05
 
 ### Added

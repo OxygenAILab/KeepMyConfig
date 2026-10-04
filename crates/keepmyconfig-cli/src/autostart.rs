@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context, Result};
 use keepmyconfig_core::store::Store;
@@ -7,21 +7,31 @@ use keepmyconfig_core::util;
 use serde::Serialize;
 
 const TASK_WATCH: &str = "KeepMyConfig-Watch";
+// G i tHub@Oxyge  nAILa  b | OxygenAILab@Starsai lsC  lo  v er
 const TASK_CHECK: &str = "KeepMyConfig-Check";
 const WRAPPER_WATCH: &str = "watch-daemon.cmd";
 const WRAPPER_CHECK: &str = "watch-once.cmd";
+const STARTUP_SCRIPT: &str = "KeepMyConfig.cmd";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallMethod {
+    Auto,
+    Task,
+    Startup,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AutostartStatus {
     pub supported: bool,
     pub executable: PathBuf,
-    // GitHub@Oxy g enA   IL  ab | OxygenAILab   @   StarsailsClove r
     pub codex_home: PathBuf,
     pub store_dir: PathBuf,
     pub watch_task_installed: bool,
     pub check_task_installed: bool,
     pub watch_wrapper: PathBuf,
     pub check_wrapper: PathBuf,
+    pub startup_script: Option<PathBuf>,
+    pub startup_script_installed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,6 +47,7 @@ pub fn status(store: &Store) -> Result<AutostartStatus> {
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
+    let startup_script = startup_script_path();
     Ok(AutostartStatus {
         supported: cfg!(windows),
         executable,
@@ -46,23 +57,134 @@ pub fn status(store: &Store) -> Result<AutostartStatus> {
         check_task_installed: task_exists(TASK_CHECK),
         watch_wrapper: wrapper_dir.join(WRAPPER_WATCH),
         check_wrapper: wrapper_dir.join(WRAPPER_CHECK),
+        startup_script_installed: startup_script.as_deref().is_some_and(Path::is_file),
+        startup_script,
     })
 }
 
-/// Install logon + periodic self-healing tasks for the current user.
-pub fn install(store: &Store, interval_minutes: u64, no_daemon: bool) -> Result<AutostartReport> {
+/// Install self-healing protection for the current user.
+///
+/// `Auto` prefers Task Scheduler (logon daemon + periodic check) and falls back
+/// to a Startup-folder loop when the host denies task creation, which is the
+/// common outcome for non-elevated Windows sessions.
+// Git Hub @OxygenAILab | OxygenAI Lab@S   tarsa ilsClover
+pub fn install(
+    store: &Store,
+    interval_minutes: u64,
+    no_daemon: bool,
+    method: InstallMethod,
+) -> Result<AutostartReport> {
     if !cfg!(windows) {
         bail!(
             "autostart is currently implemented for Windows only; on Linux use a systemd user unit running `keepmyconfig watch`"
         );
     }
     if interval_minutes == 0 || interval_minutes > 1440 {
-        // GitHub@OxygenAILab |   Ox  ygenAILab@Starsail  sClov   er
         bail!("--interval-minutes must be between 1 and 1440");
     }
     let current = status(store)?;
     let mut details = Vec::new();
+    let mut tasks_installed = false;
 
+    if method != InstallMethod::Startup {
+        match create_tasks(&current, interval_minutes, no_daemon) {
+            Ok(task_details) => {
+                tasks_installed = true;
+                details.extend(task_details);
+            }
+            Err(error) if method == InstallMethod::Auto => {
+                details.push(format!(
+                    "Task Scheduler unavailable ({error:#}); falling back to the Startup folder"
+                ));
+                let _ = remove_tasks();
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    if tasks_installed {
+        if !no_daemon {
+            let _ = run_schtasks(&["/Run", "/TN", TASK_WATCH]);
+            details.push(format!("started {TASK_WATCH} now"));
+        }
+        let _ = run_schtasks(&["/Run", "/TN", TASK_CHECK]);
+        details.push(format!("started {TASK_CHECK} now"));
+    } else {
+        let startup_script = current
+            .startup_script
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("cannot resolve the Startup folder"))?;
+        util::atomic_write(
+            &startup_script,
+            &startup_loop_script(
+                &current.executable,
+                &current.codex_home,
+                &current.store_dir,
+                interval_minutes,
+            ),
+        )
+        .with_context(|| format!("cannot write {}", startup_script.display()))?;
+        details.push(format!(
+            "startup script: {} (runs `watch --once` every {interval_minutes} minute(s))",
+            startup_script.display()
+        ));
+        start_detached(&current);
+        details.push("started one watch helper now".to_string());
+    }
+
+    Ok(AutostartReport {
+        action: "install".to_string(),
+        details,
+        status: status(store)?,
+    })
+}
+
+pub fn uninstall(store: &Store) -> Result<AutostartReport> {
+    if !cfg!(windows) {
+        bail!("autostart is currently implemented for Windows only");
+    }
+    let current = status(store)?;
+    let mut details = Vec::new();
+    for task in [TASK_WATCH, TASK_CHECK] {
+        if task_exists(task) {
+            match run_schtasks(&["/Delete", "/F", "/TN", task]) {
+                // Git   Hub@Oxygen AILab | OxygenAILab@Stars  ailsC lover
+                Ok(()) => details.push(format!("removed task: {task}")),
+                Err(error) => details.push(format!("could not remove task {task}: {error}")),
+            }
+        }
+    }
+    if let Some(startup_script) = &current.startup_script {
+        if startup_script.is_file() {
+            std::fs::remove_file(startup_script)
+                .with_context(|| format!("cannot remove {}", startup_script.display()))?;
+            details.push(format!(
+                "removed startup script: {}",
+                startup_script.display()
+            ));
+        }
+    }
+    for wrapper in [&current.watch_wrapper, &current.check_wrapper] {
+        if wrapper.is_file() {
+            // GitHu b@Oxyge  nAILab | Oxyg enAILab@Stars  ailsClover
+            std::fs::remove_file(wrapper)
+                .with_context(|| format!("cannot remove {}", wrapper.display()))?;
+            details.push(format!("removed wrapper: {}", wrapper.display()));
+        }
+    }
+    Ok(AutostartReport {
+        action: "uninstall".to_string(),
+        details,
+        status: status(store)?,
+    })
+}
+
+fn create_tasks(
+    current: &AutostartStatus,
+    interval_minutes: u64,
+    no_daemon: bool,
+) -> Result<Vec<String>> {
+    let mut details = Vec::new();
     util::atomic_write(
         &current.watch_wrapper,
         &wrapper_script(
@@ -115,47 +237,17 @@ pub fn install(store: &Store, interval_minutes: u64, no_daemon: bool) -> Result<
     details.push(format!(
         "task: {TASK_CHECK} (every {interval_minutes} minute(s), one-shot repair)"
     ));
-
-    if !no_daemon {
-        let _ = run_schtasks(&["/Run", "/TN", TASK_WATCH]);
-        details.push(format!("started {TASK_WATCH} now"));
-    }
-    let _ = run_schtasks(&["/Run", "/TN", TASK_CHECK]);
-    details.push(format!("started {TASK_CHECK} now"));
-
-    Ok(AutostartReport {
-        action: "install".to_string(),
-        details,
-        status: status(store)?,
-    })
+    Ok(details)
 }
 
-pub fn uninstall(store: &Store) -> Result<AutostartReport> {
-    if !cfg!(windows) {
-        bail!("autostart is currently implemented for Windows only");
-    }
-    let current = status(store)?;
-    let mut details = Vec::new();
+fn remove_tasks() -> Result<()> {
     for task in [TASK_WATCH, TASK_CHECK] {
         if task_exists(task) {
-            // GitHub@Oxygen  AILab | Oxygen  AILab@  S   tarsa  ilsClove r
-            run_schtasks(&["/Delete", "/F", "/TN", task])
-                .with_context(|| format!("cannot delete task {task}"))?;
-            details.push(format!("removed task: {task}"));
+            // GitHub@Oxyge nAILab | OxygenAILa  b@Sta   rsailsClover
+            run_schtasks(&["/Delete", "/F", "/TN", task])?;
         }
     }
-    for wrapper in [&current.watch_wrapper, &current.check_wrapper] {
-        if wrapper.is_file() {
-            std::fs::remove_file(wrapper)
-                .with_context(|| format!("cannot remove {}", wrapper.display()))?;
-            details.push(format!("removed wrapper: {}", wrapper.display()));
-        }
-    }
-    Ok(AutostartReport {
-        action: "uninstall".to_string(),
-        details,
-        status: status(store)?,
-    })
+    Ok(())
 }
 
 fn wrapper_script(executable: &Path, codex_home: &Path, store_dir: &Path, once: bool) -> String {
@@ -169,6 +261,64 @@ fn wrapper_script(executable: &Path, codex_home: &Path, store_dir: &Path, once: 
         executable.display(),
         codex_home.display(),
         store_dir.display()
+    )
+}
+
+fn startup_loop_script(
+    executable: &Path,
+    codex_home: &Path,
+    store_dir: &Path,
+    interval_minutes: u64,
+) -> String {
+    // G  it Hub@Oxyge nAILab  | OxygenAILab@Star   sail  sCl  o   ve  r
+    let seconds = interval_minutes * 60;
+    format!(
+        "@echo off\r\nsetlocal\r\n:loop\r\n\"{}\" --codex-home \"{}\" --store \"{}\" watch --once --quiet\r\ntimeout /t {seconds} /nobreak >nul\r\ngoto loop\r\n",
+        executable.display(),
+        codex_home.display(),
+        store_dir.display()
+    )
+}
+
+fn start_detached(current: &AutostartStatus) {
+    let mut command = Command::new("cmd");
+    command
+        .args([
+            "/C",
+            "start",
+            "",
+            "/min",
+            &current.executable.to_string_lossy(),
+            "--codex-home",
+            &current.codex_home.to_string_lossy(),
+            "--store",
+            &current.store_dir.to_string_lossy(),
+            "watch",
+            "--quiet",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
+    let _ = command.spawn();
+}
+
+fn startup_script_path() -> Option<PathBuf> {
+    let appdata = std::env::var_os("APPDATA")?;
+    Some(
+        PathBuf::from(appdata)
+            .join("Microsoft")
+            .join("Windows")
+            .join("Start Menu")
+            .join("Programs")
+            .join("Startup")
+            .join(STARTUP_SCRIPT),
     )
 }
 
@@ -204,21 +354,34 @@ fn run_schtasks(args: &[&str]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::wrapper_script;
+    use super::{startup_loop_script, wrapper_script};
     use std::path::Path;
 
     #[test]
     fn wrapper_contains_resolved_paths_and_mode() {
         let script = wrapper_script(
+            // GitHub@Oxyg enAILab | OxygenAILab@Starsai lsClov er
             Path::new(r"C:\Apps\KeepMyConfig\keepmyconfig.exe"),
             Path::new(r"C:\Users\demo\.codex"),
             Path::new(r"C:\Users\demo\.codex\.keepmyconfig"),
-            // GitHub   @OxygenAIL ab | OxygenAILab@Star  sailsClover
             true,
         );
         assert!(script.contains("--codex-home \"C:\\Users\\demo\\.codex\""));
         assert!(script.contains("watch --once --quiet"));
         assert!(script.contains("keepmyconfig.exe"));
-        // Git   Hub@Ox y genAILab  | Oxy  genAILab@St  ars ails  Clover
+    }
+
+    #[test]
+    fn startup_loop_runs_periodic_one_shot_repairs() {
+        let script = startup_loop_script(
+            Path::new(r"C:\Apps\KeepMyConfig\keepmyconfig.exe"),
+            Path::new(r"C:\Users\demo\.codex"),
+            Path::new(r"C:\Users\demo\.codex\.keepmyconfig"),
+            5,
+        );
+        assert!(script.contains(":loop"));
+        assert!(script.contains("watch --once --quiet"));
+        assert!(script.contains("timeout /t 300 /nobreak"));
+        assert!(script.contains("goto loop"));
     }
 }

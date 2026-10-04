@@ -191,11 +191,21 @@ enum AutostartCommand {
         /// Only install the periodic check (no long-running daemon)
         #[arg(long)]
         no_daemon: bool,
+        /// Installation mechanism: Task Scheduler, Startup folder, or auto-fallback
+        #[arg(long, value_enum, default_value_t = AutostartMethod::Auto)]
+        method: AutostartMethod,
     },
     /// Remove the scheduled tasks and wrapper scripts
     Uninstall,
     /// Show whether the tasks are installed
     Status,
+}
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum AutostartMethod {
+    Auto,
+    Task,
+    Startup,
 }
 
 fn main() -> ExitCode {
@@ -373,8 +383,14 @@ fn run_autostart(store: &Store, command: AutostartCommand, json: bool) -> Result
         AutostartCommand::Install {
             interval_minutes,
             no_daemon,
+            method,
         } => {
-            let report = autostart::install(store, interval_minutes, no_daemon)
+            let method = match method {
+                AutostartMethod::Auto => autostart::InstallMethod::Auto,
+                AutostartMethod::Task => autostart::InstallMethod::Task,
+                AutostartMethod::Startup => autostart::InstallMethod::Startup,
+            };
+            let report = autostart::install(store, interval_minutes, no_daemon, method)
                 .context("cannot install autostart tasks")?;
             print_value(json, &report, render::autostart_text(&report))?;
         }
@@ -537,13 +553,17 @@ fn run_doctor(store: &Store, json: bool) -> Result<ExitCode> {
             "not supported on this platform (use a systemd user unit on Linux)".to_string(),
         )),
         Ok(status) => {
-            let installed = status.watch_task_installed || status.check_task_installed;
+            let installed = status.watch_task_installed
+                || status.check_task_installed
+                || status.startup_script_installed;
             checks.push(check_status(
                 "autostart",
                 if installed { "ok" } else { "warn" },
                 format!(
-                    "watch task: {}, periodic check: {}",
-                    status.watch_task_installed, status.check_task_installed
+                    "watch task: {}, periodic check: {}, startup script: {}",
+                    installed_label(status.watch_task_installed),
+                    installed_label(status.check_task_installed),
+                    installed_label(status.startup_script_installed)
                 ),
             ));
         }
@@ -585,6 +605,14 @@ fn run_doctor(store: &Store, json: bool) -> Result<ExitCode> {
 
 fn check(name: &str, ok: bool, detail: String) -> DoctorCheck {
     check_status(name, if ok { "ok" } else { "fail" }, detail)
+}
+
+fn installed_label(value: bool) -> &'static str {
+    if value {
+        "installed"
+    } else {
+        "not installed"
+    }
 }
 
 fn check_status(name: &str, status: &str, detail: String) -> DoctorCheck {

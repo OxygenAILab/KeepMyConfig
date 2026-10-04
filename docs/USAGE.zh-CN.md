@@ -103,6 +103,7 @@ keepmyconfig repair
 ```powershell
 keepmyconfig autostart install            # 登录守护 + 每 5 分钟检查
 keepmyconfig autostart install --interval-minutes 10
+keepmyconfig autostart install --method auto|task|startup
 keepmyconfig autostart install --no-daemon
 keepmyconfig autostart status
 keepmyconfig autostart uninstall
@@ -111,7 +112,9 @@ keepmyconfig autostart uninstall
 `install` 会在 `keepmyconfig.exe` 旁写两个包装脚本，注册
 `KeepMyConfig-Watch`（登录时运行 `watch`）与 `KeepMyConfig-Check`（按计划运行
 `watch --once --quiet`）两个当前用户计划任务，并立即各启动一次。即使守护进程被应用
-更新或重启杀掉，周期任务也会持续修复。
+更新或重启杀掉，周期任务也会持续修复。若当前会话无权创建计划任务（非提权会话常见），
+`auto` 会回退到启动文件夹循环脚本，每 N 分钟执行一次单次修复；也可用
+`--method startup` 直接选择该方式。
 
 ### 已经丢失配置的抢救
 
