@@ -21,6 +21,11 @@ and this project adheres to the BC version scheme (`v{Year}.{Major}-Alpha N`).
 
 ### Fixed
 
+- `status` no longer points a benign edit at `repair`. Drift without a clobber
+  fingerprint is the user's or the Codex app's own write, and `repair` merges
+  unconditionally — so the old hint invited reverting a change the user meant to
+  keep. It now names `capture` first and offers `repair` as the deliberate revert;
+  `doctor` reports the same distinction instead of a bare "no clobber fingerprint".
 - The immediately started Startup helper now survives the installer session:
   a hidden VBS launcher is created through the WMI service
   (`Invoke-CimMethod Win32_Process Create`), so it is not a member of the
