@@ -17,6 +17,10 @@ pub struct State {
     pub repairs: u64,
     pub last_event: Option<LastEvent>,
     pub ccswitch_last_adopt: Option<String>,
+    pub last_asset_backup_at: Option<String>,
+    pub last_asset_backup_dir: Option<String>,
+    pub last_asset_backup_files: u64,
+    pub last_asset_backup_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

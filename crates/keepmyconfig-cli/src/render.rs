@@ -1,6 +1,8 @@
 use crate::autostart::{AutostartReport, AutostartStatus};
 use keepmyconfig_core::assets::{BackupReport, RestoreReport};
-use keepmyconfig_core::ccswitch::{AdoptReport, CcSwitchSummary, RestoreDbReport};
+use keepmyconfig_core::ccswitch::{
+    AdoptReport, CcSwitchRecoverReport, CcSwitchSummary, RestoreDbReport,
+};
 use keepmyconfig_core::store::{CaptureReport, InitReport, RepairReport, StatusReport};
 use keepmyconfig_core::watch::{render_event, WatchEvent};
 
@@ -106,6 +108,15 @@ pub fn status_text(report: &StatusReport) -> String {
     if let Some(error) = &report.live.parse_error {
         text.push_str(&format!("Live error : {error}\n"));
     }
+    let assets = match (&report.asset_backup.last_at, report.asset_backup.files) {
+        (Some(at), files) => format!(
+            "last {at} ({} files, {})",
+            files,
+            human_bytes(report.asset_backup.bytes)
+        ),
+        (None, _) => "no snapshot yet (run `backup --assets all --link`)".to_string(),
+    };
+    text.push_str(&format!("Assets     : {assets}\n"));
 
     if let Some(classification) = &report.classification {
         text.push_str(&format!(
@@ -313,6 +324,53 @@ pub fn restore_db_text(report: &RestoreDbReport) -> String {
         report.restored_from.display(),
         report.pre_restore_backup.display()
     )
+}
+
+pub fn ccswitch_recover_text(report: &CcSwitchRecoverReport) -> String {
+    let mut text = format!("CC Switch recovery from {}\n", report.db_path.display());
+    if !report.candidates.is_empty() {
+        text.push_str("  candidates (protected paths):\n");
+        for candidate in report.candidates.iter().take(5) {
+            text.push_str(&format!(
+                "    - {} ({}) {}{}\n",
+                candidate.provider_name,
+                candidate.provider_id,
+                candidate.protected_paths,
+                if candidate.is_current {
+                    " [current]"
+                } else {
+                    ""
+                }
+            ));
+        }
+    }
+    if let Some(selected) = &report.selected {
+        text.push_str(&format!(
+            "  selected: {} ({})\n",
+            selected.provider_name, selected.provider_id
+        ));
+    }
+    if let Some(recover) = &report.recover {
+        text.push_str(&format!("  {}\n", recover.message));
+        for action in &recover.actions {
+            text.push_str(&format!("    {} {}\n", action.kind, action.path));
+        }
+        if let Some(backup) = &recover.backup {
+            text.push_str(&format!("  backup: {}\n", backup.display()));
+        }
+    }
+    for warning in &report.warnings {
+        text.push_str(&format!("  warning: {warning}\n"));
+    }
+    if report.dry_run
+        && report
+            .recover
+            .as_ref()
+            .is_some_and(|recover| !recover.actions.is_empty())
+    {
+        text.push_str("Dry run: re-run with --apply to write.\n");
+    }
+    text
 }
 
 pub fn watch_text(event: &WatchEvent) -> String {

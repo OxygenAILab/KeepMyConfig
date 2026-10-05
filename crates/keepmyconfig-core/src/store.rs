@@ -11,7 +11,7 @@ use crate::journal::{self, JournalEvent};
 use crate::paths::Paths;
 use crate::policy::{CompiledPolicy, MergeMode, Policy};
 use crate::state::{LastEvent, State};
-use crate::tomltree::{apply_overlay, parse_document, project, MergeActionKind};
+use crate::tomltree::{apply_overlay, parse_document, project, MergeAction, MergeActionKind};
 use crate::util;
 
 pub const KMC_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -66,6 +66,15 @@ pub struct LiveInfo {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct AssetBackupInfo {
+    pub last_at: Option<String>,
+    pub last_dir: Option<String>,
+    pub files: u64,
+    pub bytes: u64,
+    pub age_days: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct StatusReport {
     pub version: String,
     pub codex_home: PathBuf,
@@ -77,6 +86,7 @@ pub struct StatusReport {
     pub classification: Option<Classification>,
     pub diff: Option<DiffReport>,
     pub ccswitch: Option<crate::ccswitch::CcSwitchSummary>,
+    pub asset_backup: AssetBackupInfo,
     pub suggestions: Vec<String>,
 }
 
@@ -111,6 +121,16 @@ pub struct RepairReport {
     pub actions: Vec<ActionSummary>,
     pub backup: Option<PathBuf>,
     pub classification: Classification,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RecoverReport {
+    pub performed: bool,
+    pub dry_run: bool,
+    pub source_label: String,
+    pub actions: Vec<ActionSummary>,
+    pub backup: Option<PathBuf>,
     pub message: String,
 }
 
@@ -340,16 +360,24 @@ impl Store {
                 match self.evaluate(live_text) {
                     Ok(evaluation) => {
                         live_info.parsed = true;
-                        if evaluation.classification.kind == ChangeKind::Clobber {
-                            suggestions.push(
+                        match evaluation.classification.kind {
+                            ChangeKind::Clobber => suggestions.push(
                                 "protected configuration is missing: run `keepmyconfig repair`"
                                     .to_string(),
-                            );
-                        } else if evaluation.diff.has_protected_drift() {
-                            suggestions.push(
-                                "protected drift detected; run `keepmyconfig repair` to restore it"
-                                    .to_string(),
-                            );
+                            ),
+                            // A benign edit is the user's or the Codex app's own write. `repair`
+                            // merges unconditionally, so pointing at it here would invite the
+                            // user to revert a change they meant to keep. Lead with `capture`;
+                            // offer `repair` only as the deliberate revert.
+                            ChangeKind::Edit if evaluation.diff.has_protected_drift() => {
+                                suggestions.push(
+                                    "protected values differ without a clobber fingerprint \
+                                     (user or Codex edit): run `keepmyconfig capture` to adopt \
+                                     the change, or `keepmyconfig repair` to revert it"
+                                        .to_string(),
+                                );
+                            }
+                            _ => {}
                         }
                         classification = Some(evaluation.classification);
                         diff = Some(evaluation.diff);
@@ -373,6 +401,20 @@ impl Store {
                         .to_string(),
                 );
             }
+        }
+        let asset_backup = asset_backup_info(&state);
+        match &asset_backup.last_at {
+            None => suggestions.push(
+                "no asset snapshot yet: run `keepmyconfig backup --assets all --link` to protect skills and plugins"
+                    .to_string(),
+            ),
+            Some(_) if asset_backup.age_days.is_some_and(|days| days > 30) => {
+                suggestions.push(format!(
+                    "last asset snapshot is {} day(s) old: run `keepmyconfig backup --assets all --link`",
+                    asset_backup.age_days.unwrap_or_default()
+                ));
+            }
+            _ => {}
         }
 
         Ok(StatusReport {
@@ -399,6 +441,7 @@ impl Store {
             classification,
             diff,
             ccswitch,
+            asset_backup,
             suggestions,
         })
     }
@@ -585,6 +628,82 @@ impl Store {
     pub fn read_baseline_text(&self) -> Result<String> {
         util::read_optional(&self.paths.baseline_file)?
             .ok_or_else(|| Error::NotInitialized(self.paths.store_dir.clone()))
+    }
+
+    /// Recover protected keys from an external document (for example a CC
+    /// Switch provider config) and merge them into the live config.
+    pub fn recover(
+        &self,
+        source_text: &str,
+        source_label: &str,
+        dry_run: bool,
+    ) -> Result<RecoverReport> {
+        let _lock = self.lock()?;
+        self.ensure_initialized()?;
+        let live_text = self.read_live_text()?;
+        let mut live = parse_document(&live_text, &self.paths.config_file.display().to_string())?;
+        let source = parse_document(source_text, "<recover source>")?;
+        let overlay = project(&source, &self.policy)?;
+        let actions = apply_overlay(&mut live, &overlay, &self.policy, MergeMode::OverlayWins);
+        let summaries = summarize_actions(&actions);
+        if summaries.is_empty() {
+            return Ok(RecoverReport {
+                performed: false,
+                dry_run,
+                source_label: source_label.to_string(),
+                actions: summaries,
+                backup: None,
+                message: "nothing to recover (source has no missing protected keys)".to_string(),
+            });
+        }
+        if dry_run {
+            return Ok(RecoverReport {
+                performed: false,
+                dry_run: true,
+                source_label: source_label.to_string(),
+                actions: summaries,
+                backup: None,
+                message: "dry run: no files were written".to_string(),
+            });
+        }
+
+        let backup = self.backup_live_file("pre-recover")?;
+        let merged_text = live.to_string();
+        util::atomic_write(&self.paths.config_file, &merged_text)?;
+        self.persist_baseline(&live)?;
+
+        let mut state = State::load_or_default(&self.paths.state_file)?;
+        state.updated_at = Some(util::timestamp_rfc3339());
+        state.captures += 1;
+        state.baseline_sha256 = Some(util::sha256_hex(&merged_text));
+        state.baseline_size = Some(merged_text.len() as u64);
+        state.last_event = Some(LastEvent {
+            kind: "recover".to_string(),
+            at: util::timestamp_rfc3339(),
+            reason: format!("recovered protected keys from {source_label}"),
+            actions: summaries.len(),
+        });
+        state.save(&self.paths.state_file)?;
+        journal::append(
+            &self.paths.journal_file,
+            &JournalEvent::new(
+                "recover",
+                "protected keys recovered from an external source",
+            )
+            .with_details(serde_json::json!({
+                "source": source_label,
+                "actions": summaries,
+                "backup": backup,
+            })),
+        )?;
+        Ok(RecoverReport {
+            performed: true,
+            dry_run: false,
+            source_label: source_label.to_string(),
+            actions: summaries,
+            backup: Some(backup),
+            message: "protected configuration recovered".to_string(),
+        })
     }
 
     pub fn backup_live_file(&self, tag: &str) -> Result<PathBuf> {
@@ -808,4 +927,34 @@ impl Store {
 fn count_document_paths(text: &str) -> Result<usize> {
     let doc = parse_document(text, "<overlay>")?;
     Ok(crate::tomltree::collect_all_leaves(&doc).len())
+}
+
+fn asset_backup_info(state: &State) -> AssetBackupInfo {
+    let age_days = state
+        .last_asset_backup_at
+        .as_deref()
+        .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
+        .map(|time| (chrono::Local::now() - time.with_timezone(&chrono::Local)).num_days());
+    AssetBackupInfo {
+        last_at: state.last_asset_backup_at.clone(),
+        last_dir: state.last_asset_backup_dir.clone(),
+        files: state.last_asset_backup_files,
+        bytes: state.last_asset_backup_bytes,
+        age_days,
+    }
+}
+
+fn summarize_actions(actions: &[MergeAction]) -> Vec<ActionSummary> {
+    actions
+        .iter()
+        .filter(|action| action.kind != MergeActionKind::KeptLive)
+        .map(|action| ActionSummary {
+            path: action.path.clone(),
+            kind: match action.kind {
+                MergeActionKind::Restored => "restored".to_string(),
+                MergeActionKind::Overwritten => "overwritten".to_string(),
+                MergeActionKind::KeptLive => "kept_live".to_string(),
+            },
+        })
+        .collect()
 }

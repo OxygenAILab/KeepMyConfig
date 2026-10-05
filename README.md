@@ -138,7 +138,7 @@ rolls the database back.
 | `autostart install\|uninstall\|status` | Windows logon daemon + periodic one-shot repair task |
 | `backup --assets config,skills,plugins` | Versioned asset backup (hard links with `--link`) |
 | `restore-assets [--from DIR]` | Restore missing files; `--overwrite` to replace |
-| `ccswitch inspect\|adopt\|backups\|restore` | Opt-in CC Switch database integration |
+| `ccswitch inspect\|adopt\|recover\|backups\|restore` | Opt-in CC Switch database integration and recovery |
 | `doctor` | Environment and compatibility report |
 
 Full reference: [docs/USAGE.md](./docs/USAGE.md).

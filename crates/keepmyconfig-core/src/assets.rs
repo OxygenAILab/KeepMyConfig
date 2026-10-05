@@ -195,11 +195,32 @@ pub fn backup_assets(store: &Store, options: &BackupOptions) -> Result<BackupRep
         .map_err(|e| Error::Asset(format!("cannot serialize manifest: {e}")))?;
     util::atomic_write(&manifest_path, &(manifest_text + "\n"))?;
 
+    let bytes: u64 = entries.iter().map(|entry| entry.size).sum();
+    let files = entries.len() as u64;
+    let mut state = crate::state::State::load_or_default(&paths.state_file)?;
+    let now = util::timestamp_rfc3339();
+    state.updated_at = Some(now.clone());
+    state.last_asset_backup_at = Some(now.clone());
+    state.last_asset_backup_dir = Some(backup_dir.to_string_lossy().to_string());
+    state.last_asset_backup_files = files;
+    state.last_asset_backup_bytes = bytes;
+    state.save(&paths.state_file)?;
+    crate::journal::append(
+        &paths.journal_file,
+        &crate::journal::JournalEvent::new("asset_backup", "asset snapshot created").with_details(
+            serde_json::json!({
+                "dir": backup_dir,
+                "files": files,
+                "bytes": bytes,
+            }),
+        ),
+    )?;
+
     Ok(BackupReport {
         backup_dir,
         manifest: manifest_path,
-        files: entries.len() as u64,
-        bytes: entries.iter().map(|entry| entry.size).sum(),
+        files,
+        bytes,
         excluded_count,
         too_large_count,
         symlink_count,

@@ -179,6 +179,17 @@ enum CcSwitchCommand {
         #[arg(long)]
         force: bool,
     },
+    /// Recover protected configuration from a stored provider config
+    Recover {
+        #[arg(long, value_name = "FILE")]
+        db: Option<PathBuf>,
+        /// Provider id or name (defaults to the config with the most protected paths)
+        #[arg(long)]
+        provider: Option<String>,
+        /// Write changes (default is a dry run)
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -458,6 +469,15 @@ fn run_ccswitch(store: &Store, command: CcSwitchCommand, json: bool) -> Result<E
                 .context("CC Switch restore failed")?;
             print_value(json, &report, render::restore_db_text(&report))?;
         }
+        CcSwitchCommand::Recover {
+            db,
+            provider,
+            apply,
+        } => {
+            let report = ccswitch::recover(store, db, provider.as_deref(), apply)
+                .context("CC Switch recovery failed")?;
+            print_value(json, &report, render::ccswitch_recover_text(&report))?;
+        }
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -519,8 +539,29 @@ fn run_doctor(store: &Store, json: bool) -> Result<ExitCode> {
         if clobber {
             // GitHub@OxygenAILab | OxygenAI   Lab@Starsai  lsClove   r
             "protected drift detected; run `keepmyconfig repair`".to_string()
+        } else if status
+            .diff
+            .as_ref()
+            .is_some_and(|diff| diff.has_protected_drift())
+        {
+            // Drift without a clobber fingerprint is a user or Codex edit. `repair` merges
+            // unconditionally, so name `capture` first and let the user choose.
+            "no clobber fingerprint · protected values differ from the baseline; run `capture` to adopt or `repair` to revert".to_string()
         } else {
             "no clobber fingerprint".to_string()
+        },
+    ));
+    let assets_ok = status.asset_backup.last_at.is_some()
+        && status.asset_backup.age_days.is_some_and(|days| days <= 30);
+    checks.push(check_status(
+        "assets",
+        if assets_ok { "ok" } else { "warn" },
+        match &status.asset_backup.last_at {
+            Some(at) => format!(
+                "last snapshot {at} ({} files, {} bytes)",
+                status.asset_backup.files, status.asset_backup.bytes
+            ),
+            None => "no snapshot yet (run `keepmyconfig backup --assets all --link`)".to_string(),
         },
     ));
     match ccswitch::summary() {

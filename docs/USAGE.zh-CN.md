@@ -149,6 +149,13 @@ keepmyconfig restore-assets --include-backup-only   # 连 auth.json 一起恢复
 <!-- GitHub@Oxyge nAILab | Oxyg   enAILab@StarsailsClo  ver -->
 `plugins/cache/**`；超过 50 MiB 的文件跳过并计入报告。
 
+`status` 会显示最近快照，`doctor` 在没有快照或快照超过 30 天时告警。同一卷上使用
+硬链接的快照几乎不占额外空间：
+
+```powershell
+keepmyconfig backup --assets all --link
+```
+
 ## 5. CC Switch 集成
 
 ```powershell
@@ -163,6 +170,17 @@ keepmyconfig ccswitch restore --backup "...\cc-switch-20261002-190000.db"
 
 adopt 按表结构（`settings`、`providers`、`mcp_servers`）校验数据库而非死认版本号，
 记录 `PRAGMA user_version`，并在一致备份之后用一个事务写完全部改动。
+
+当本地基线与 Codex 自带备份都已丢失时，可从 CC Switch 保存的供应商配置里恢复：
+
+```powershell
+keepmyconfig ccswitch recover                 # 预览，自动选择最完整的配置
+keepmyconfig ccswitch recover --provider "Sails API"
+keepmyconfig ccswitch recover --apply
+```
+
+该命令会把每个供应商配置按保护策略投影，选择受保护路径最多的那份（并列时优先当前
+供应商），以 `overlay_wins` 合并，并在写入前生成 `pre-recover` 备份。
 
 ## 6. 检测评分
 

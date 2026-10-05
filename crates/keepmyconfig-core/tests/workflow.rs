@@ -247,6 +247,10 @@ fn asset_backup_and_restore_round_trip() {
     )
     .unwrap();
     assert!(backup.files >= 3);
+    let state = keepmyconfig_core::state::State::load_or_default(&paths.state_file).unwrap();
+    assert!(state.last_asset_backup_at.is_some());
+    assert_eq!(state.last_asset_backup_files, backup.files);
+    assert_eq!(state.last_asset_backup_bytes, backup.bytes);
     assert!(backup.backup_dir.join("config.toml").is_file());
     assert!(backup.backup_dir.join("auth.json").is_file());
 
@@ -397,6 +401,87 @@ conversationDetailMode = "STEPS_COMMANDS"
     // The new app build keeps its own updated runtime paths and new keys.
     assert!(repaired.contains("26.930.31730"));
     assert!(repaired.contains("conversationDetailMode"));
+}
+
+#[test]
+fn recover_from_ccswitch_provider_config() {
+    let (_temp, paths, store) = setup("model = \"deepseek-v4.1-flash\"\n");
+    store.init(None, false).unwrap();
+
+    let db_dir = tempfile::tempdir().unwrap();
+    let db_path = db_dir.path().join("cc-switch.db");
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute_batch(
+            r#"
+CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE providers (
+    id TEXT NOT NULL,
+    app_type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    settings_config TEXT NOT NULL,
+    meta TEXT NOT NULL DEFAULT '{}',
+    is_current BOOLEAN NOT NULL DEFAULT 0,
+    sort_index INTEGER,
+    PRIMARY KEY (id, app_type)
+);
+CREATE TABLE mcp_servers (id TEXT PRIMARY KEY);
+"#,
+        )
+        .unwrap();
+    let rich_config = r#"model = "deepseek-v4.1-flash"
+
+[mcp_servers.prima-mock-api]
+command = "pma.exe"
+args = ["serve", "--mcp"]
+
+[plugins."pdf@openai-primary-runtime"]
+enabled = true
+
+[desktop]
+followUpQueueMode = "queue"
+"#;
+    let rich_settings = serde_json::json!({ "config": rich_config }).to_string();
+    let poor_settings =
+        serde_json::json!({ "config": "model = \"deepseek-v4.1-flash\"\n" }).to_string();
+    connection
+        .execute(
+            "INSERT INTO providers (id, app_type, name, settings_config, is_current, sort_index)
+             VALUES ('provider-poor', 'codex', 'Poor', ?1, 1, 0)",
+            params![poor_settings],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO providers (id, app_type, name, settings_config, is_current, sort_index)
+             VALUES ('provider-rich', 'codex', 'Rich', ?1, 0, 1)",
+            params![rich_settings],
+        )
+        .unwrap();
+    drop(connection);
+
+    let preview = ccswitch::recover(&store, Some(db_path.clone()), None, false).unwrap();
+    let selected = preview.selected.as_ref().unwrap();
+    assert_eq!(selected.provider_id, "provider-rich");
+    assert!(selected.protected_paths >= 4);
+    let dry_run = preview.recover.as_ref().unwrap();
+    assert!(dry_run.dry_run);
+    assert!(!dry_run.actions.is_empty());
+    let live_before = fs::read_to_string(&paths.config_file).unwrap();
+    assert!(!live_before.contains("pma.exe"), "dry run must not write");
+
+    let applied = ccswitch::recover(&store, Some(db_path), Some("Rich"), true).unwrap();
+    let report = applied.recover.as_ref().unwrap();
+    assert!(report.performed);
+    assert!(report
+        .actions
+        .iter()
+        .any(|action| action.path.contains("prima-mock-api")));
+    let live = fs::read_to_string(&paths.config_file).unwrap();
+    assert!(live.contains("pma.exe"));
+    assert!(live.contains("pdf@openai-primary-runtime"));
+    assert!(live.contains("followUpQueueMode"));
+    assert!(live.contains("deepseek-v4.1-flash"));
 }
 
 #[test]
@@ -560,6 +645,50 @@ fn status_reports_clobber_then_health() {
     );
     // GitH ub@OxygenAILab | Oxy  genAILab@Star  s  ailsClov e r
     assert!(damaged.diff.as_ref().unwrap().has_protected_drift());
+    assert!(
+        damaged
+            .suggestions
+            .join("\n")
+            .contains("run `keepmyconfig repair`"),
+        "a clobber must still be guided to repair: {:?}",
+        damaged.suggestions
+    );
+}
+
+#[test]
+fn status_guides_capture_for_a_benign_edit() {
+    let (_temp, paths, store) = setup(FULL_CONFIG);
+    store.init(None, false).unwrap();
+
+    // A protected value changed, but nothing was removed and no provider identity moved,
+    // so this is an Edit — the user's or the Codex app's own write.
+    let edited = FULL_CONFIG.replace(
+        "model_reasoning_effort = \"max\"",
+        "model_reasoning_effort = \"low\"",
+    );
+    assert_ne!(
+        edited, FULL_CONFIG,
+        "fixture must actually change a protected value"
+    );
+    fs::write(&paths.config_file, &edited).unwrap();
+
+    let report = store.status().unwrap();
+    assert_eq!(
+        report.classification.as_ref().map(|c| c.kind),
+        Some(keepmyconfig_core::classify::ChangeKind::Edit)
+    );
+    assert!(report.diff.as_ref().unwrap().has_protected_drift());
+
+    let guidance = report.suggestions.join("\n");
+    // `repair` merges unconditionally, so a benign edit must be pointed at `capture` first.
+    assert!(
+        guidance.contains("`keepmyconfig capture`"),
+        "a benign edit must be guided to capture: {guidance}"
+    );
+    assert!(
+        !guidance.contains("run `keepmyconfig repair` to restore it"),
+        "the old unconditional-repair hint must not come back: {guidance}"
+    );
 }
 
 #[test]

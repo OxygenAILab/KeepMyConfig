@@ -126,7 +126,7 @@ keepmyconfig ccswitch adopt --apply
 | `autostart install\|uninstall\|status` | Windows 登录守护 + 周期性单次修复任务 |
 | `backup --assets config,skills,plugins` | 版本化资产备份（`--link` 用硬链接） |
 | `restore-assets [--from DIR]` | 恢复缺失文件；`--overwrite` 覆盖 |
-| `ccswitch inspect\|adopt\|backups\|restore` | 可选的 CC Switch 数据库集成 |
+| `ccswitch inspect\|adopt\|recover\|backups\|restore` | 可选的 CC Switch 数据库集成与恢复 |
 | `doctor` | 环境与兼容性报告 |
 
 完整参考：[docs/USAGE.zh-CN.md](./docs/USAGE.zh-CN.md)。
