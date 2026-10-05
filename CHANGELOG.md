@@ -7,6 +7,23 @@ and this project adheres to the BC version scheme (`v{Year}.{Major}-Alpha N`).
 
 ## [Unreleased]
 
+## [v26.0-Alpha.7] — 2026-10-05
+
+### Changed
+
+- `ccswitch recover` now merges a union of every valid source instead of
+  picking one config: all Codex provider configs (richest first, so the richest
+  wins conflicts) plus a synthetic `CC Switch MCP registry` document built from
+  `mcp_servers` rows with `enabled_codex = 1`. The report lists the merged
+  sources. `--provider` restricts the provider configs to the named one and
+  still adds the MCP registry.
+
+### Verified
+
+- Regression test extended with an `mcp_servers` row: recovery now restores
+  both the provider-text entries (`prima-mock-api`, plugin, desktop) and the
+  registry-only entry (`cu_bridge`).
+
 ## [v26.0-Alpha.6] — 2026-10-05
 
 ### Added

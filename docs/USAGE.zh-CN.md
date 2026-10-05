@@ -179,8 +179,10 @@ keepmyconfig ccswitch recover --provider "Sails API"
 keepmyconfig ccswitch recover --apply
 ```
 
-该命令会把每个供应商配置按保护策略投影，选择受保护路径最多的那份（并列时优先当前
-供应商），以 `overlay_wins` 合并，并在写入前生成 `pre-recover` 备份。
+该命令会把全部可用来源按保护策略投影：所有 Codex 供应商配置（最完整的优先，并列时
+优先当前供应商），再加上从 `mcp_servers` 表中 `enabled_codex = 1` 行生成的合成
+MCP registry 文档；以 `overlay_wins` 合并并集，并在写入前生成 `pre-recover` 备份。
+传 `--provider NAME` 时只使用该供应商配置（仍会附加 MCP registry）。
 
 ## 6. 检测评分
 

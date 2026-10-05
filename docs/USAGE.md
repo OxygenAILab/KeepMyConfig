@@ -201,9 +201,12 @@ keepmyconfig ccswitch recover --provider "Sails API"
 keepmyconfig ccswitch recover --apply
 ```
 
-The command projects each stored config through the protection policy, picks
-the one with the most protected paths (current provider wins ties), merges it
-with `overlay_wins`, and takes a `pre-recover` backup before writing.
+The command projects every stored source through the protection policy: all
+Codex provider configs (richest first, current provider wins ties) plus a
+synthetic document built from `mcp_servers` rows with `enabled_codex = 1`.
+It merges the union with `overlay_wins` and takes a `pre-recover` backup before
+writing. Pass `--provider NAME` to use only that provider's config (the MCP
+registry is still added).
 
 ## 6. Detection scoring
 
