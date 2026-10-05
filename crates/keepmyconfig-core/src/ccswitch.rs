@@ -10,7 +10,7 @@ use toml_edit::{DocumentMut, Item, Value as TomlValue};
 use crate::error::{Error, Result};
 use crate::policy::MergeMode;
 use crate::store::{RecoverReport, Store};
-use crate::tomltree::{apply_overlay, collect_protected_leaves, parse_document};
+use crate::tomltree::{apply_overlay, collect_protected_leaves, parse_document, project};
 use crate::util;
 
 pub const COMMON_CONFIG_KEY: &str = "common_config_codex";
@@ -71,6 +71,7 @@ pub struct CcSwitchRecoverReport {
     pub dry_run: bool,
     pub selected: Option<RecoverCandidate>,
     pub candidates: Vec<RecoverCandidate>,
+    pub sources: Vec<String>,
     pub recover: Option<RecoverReport>,
     pub warnings: Vec<String>,
 }
@@ -374,7 +375,7 @@ pub fn recover(
         })
         .map_err(|e| cc_error(&db_path, e))?;
 
-    let mut candidates: Vec<(RecoverCandidate, String)> = Vec::new();
+    let mut candidates: Vec<(RecoverCandidate, DocumentMut)> = Vec::new();
     let mut warnings = Vec::new();
     for row in rows {
         let (id, name, is_current, settings) = row.map_err(|e| cc_error(&db_path, e))?;
@@ -394,12 +395,60 @@ pub fn recover(
                         protected_paths: protected,
                         config_bytes: config_text.len(),
                     },
-                    config_text.to_string(),
+                    document,
                 ));
             }
             Err(error) => warnings.push(format!("provider {name}: {error}")),
         }
     }
+
+    // User MCP servers live in CC Switch's own table once the tool has been
+    // adopted, so the recovery union must include them explicitly.
+    let mut mcp_map = Map::new();
+    {
+        let mut statement = connection
+            .prepare("SELECT id, server_config FROM mcp_servers WHERE enabled_codex = 1")
+            .map_err(|e| cc_error(&db_path, e))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| cc_error(&db_path, e))?;
+        for row in rows {
+            let (id, server_config) = row.map_err(|e| cc_error(&db_path, e))?;
+            match serde_json::from_str::<Value>(&server_config) {
+                Ok(Value::Object(object)) => {
+                    mcp_map.insert(id, Value::Object(object));
+                }
+                Ok(_) => warnings.push(format!("mcp {id}: server_config is not an object")),
+                Err(error) => warnings.push(format!("mcp {id}: {error}")),
+            }
+        }
+    }
+    if !mcp_map.is_empty() {
+        let mut root = Map::new();
+        root.insert("mcp_servers".to_string(), Value::Object(mcp_map));
+        match toml::to_string(&Value::Object(root)) {
+            Ok(text) => match parse_document(&text, "<cc-switch mcp registry>") {
+                Ok(document) => {
+                    let protected = collect_protected_leaves(&document, store.policy()).len();
+                    candidates.push((
+                        RecoverCandidate {
+                            provider_id: "cc-switch-mcp-registry".to_string(),
+                            provider_name: "CC Switch MCP registry".to_string(),
+                            is_current: false,
+                            protected_paths: protected,
+                            config_bytes: text.len(),
+                        },
+                        document,
+                    ));
+                }
+                Err(error) => warnings.push(format!("mcp registry: {error}")),
+            },
+            Err(error) => warnings.push(format!("mcp registry serialization: {error}")),
+        }
+    }
+
     candidates.sort_by(|a, b| {
         b.0.protected_paths
             .cmp(&a.0.protected_paths)
@@ -421,21 +470,47 @@ pub fn recover(
             })?,
         None => 0,
     };
+    let registry_index = candidates
+        .iter()
+        .position(|(candidate, _)| candidate.provider_id == "cc-switch-mcp-registry");
+    let mut allowed: Vec<usize> = if provider.is_some() {
+        vec![selected_index]
+    } else {
+        (0..candidates.len()).collect()
+    };
+    if let Some(registry) = registry_index {
+        if !allowed.contains(&registry) {
+            allowed.push(registry);
+        }
+    }
+
     let candidate_list: Vec<RecoverCandidate> = candidates
         .iter()
         .map(|(candidate, _)| candidate.clone())
         .collect();
+    let sources: Vec<String> = allowed
+        .iter()
+        .filter_map(|index| candidates.get(*index))
+        .map(|(candidate, _)| candidate.provider_name.clone())
+        .collect();
 
-    let recover_report = if candidates.is_empty() {
-        warnings.push("no Codex provider configs with protected paths were found".to_string());
+    let recover_report = if allowed.is_empty() {
+        warnings.push("no Codex provider configs or MCP registry entries were found".to_string());
         None
     } else {
-        let (selected, config_text) = &candidates[selected_index];
-        let label = format!(
-            "CC Switch provider {} ({})",
-            selected.provider_name, selected.provider_id
-        );
-        Some(store.recover(config_text, &label, !apply)?)
+        // Poorest first so the richest source has the final word on conflicts.
+        let mut combined = DocumentMut::new();
+        for index in allowed.iter().rev() {
+            let overlay = project(&candidates[*index].1, store.policy())?;
+            apply_overlay(
+                &mut combined,
+                &overlay,
+                store.policy(),
+                MergeMode::OverlayWins,
+            );
+        }
+        let label = format!("CC Switch sources: {}", sources.join(", "));
+        Some(store.recover(&combined.to_string(), &label, !apply)?)
     };
 
     Ok(CcSwitchRecoverReport {
@@ -445,6 +520,7 @@ pub fn recover(
             .get(selected_index)
             .map(|(candidate, _)| candidate.clone()),
         candidates: candidate_list,
+        sources,
         recover: recover_report,
         warnings,
     })

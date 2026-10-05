@@ -7,6 +7,23 @@ and this project adheres to the BC version scheme (`v{Year}.{Major}-Alpha N`).
 
 ## [Unreleased]
 
+## [v26.0-Alpha.7] — 2026-10-05
+
+### Changed
+
+- `ccswitch recover` now merges a union of every valid source instead of
+  picking one config: all Codex provider configs (richest first, so the richest
+  wins conflicts) plus a synthetic `CC Switch MCP registry` document built from
+  `mcp_servers` rows with `enabled_codex = 1`. The report lists the merged
+  sources. `--provider` restricts the provider configs to the named one and
+  still adds the MCP registry.
+
+### Verified
+
+- Regression test extended with an `mcp_servers` row: recovery now restores
+  both the provider-text entries (`prima-mock-api`, plugin, desktop) and the
+  registry-only entry (`cu_bridge`).
+
 ## [v26.0-Alpha.6] — 2026-10-05
 
 ### Added
@@ -21,6 +38,11 @@ and this project adheres to the BC version scheme (`v{Year}.{Major}-Alpha N`).
 
 ### Fixed
 
+- `status` no longer points a benign edit at `repair`. Drift without a clobber
+  fingerprint is the user's or the Codex app's own write, and `repair` merges
+  unconditionally — so the old hint invited reverting a change the user meant to
+  keep. It now names `capture` first and offers `repair` as the deliberate revert;
+  `doctor` reports the same distinction instead of a bare "no clobber fingerprint".
 - The immediately started Startup helper now survives the installer session:
   a hidden VBS launcher is created through the WMI service
   (`Invoke-CimMethod Win32_Process Create`), so it is not a member of the

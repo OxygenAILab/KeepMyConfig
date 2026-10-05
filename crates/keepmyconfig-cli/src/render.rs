@@ -350,6 +350,12 @@ pub fn ccswitch_recover_text(report: &CcSwitchRecoverReport) -> String {
             selected.provider_name, selected.provider_id
         ));
     }
+    if !report.sources.is_empty() {
+        text.push_str(&format!(
+            "  merged sources: {}\n",
+            report.sources.join(", ")
+        ));
+    }
     if let Some(recover) = &report.recover {
         text.push_str(&format!("  {}\n", recover.message));
         for action in &recover.actions {

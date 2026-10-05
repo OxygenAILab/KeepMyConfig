@@ -425,7 +425,11 @@ CREATE TABLE providers (
     sort_index INTEGER,
     PRIMARY KEY (id, app_type)
 );
-CREATE TABLE mcp_servers (id TEXT PRIMARY KEY);
+CREATE TABLE mcp_servers (
+    id TEXT PRIMARY KEY,
+    server_config TEXT,
+    enabled_codex BOOLEAN NOT NULL DEFAULT 0
+);
 "#,
         )
         .unwrap();
@@ -458,12 +462,27 @@ followUpQueueMode = "queue"
             params![rich_settings],
         )
         .unwrap();
+    connection
+        .execute(
+            "INSERT INTO mcp_servers (id, server_config, enabled_codex)
+             VALUES ('cu_bridge', ?1, 1)",
+            params![serde_json::json!({
+                "command": "node.exe",
+                "args": ["server.mjs"],
+            })
+            .to_string()],
+        )
+        .unwrap();
     drop(connection);
 
     let preview = ccswitch::recover(&store, Some(db_path.clone()), None, false).unwrap();
     let selected = preview.selected.as_ref().unwrap();
     assert_eq!(selected.provider_id, "provider-rich");
     assert!(selected.protected_paths >= 4);
+    assert!(preview
+        .sources
+        .iter()
+        .any(|source| source == "CC Switch MCP registry"));
     let dry_run = preview.recover.as_ref().unwrap();
     assert!(dry_run.dry_run);
     assert!(!dry_run.actions.is_empty());
@@ -479,6 +498,7 @@ followUpQueueMode = "queue"
         .any(|action| action.path.contains("prima-mock-api")));
     let live = fs::read_to_string(&paths.config_file).unwrap();
     assert!(live.contains("pma.exe"));
+    assert!(live.contains("cu_bridge"));
     assert!(live.contains("pdf@openai-primary-runtime"));
     assert!(live.contains("followUpQueueMode"));
     assert!(live.contains("deepseek-v4.1-flash"));
