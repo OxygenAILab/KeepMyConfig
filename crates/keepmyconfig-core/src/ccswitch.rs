@@ -9,8 +9,8 @@ use toml_edit::{DocumentMut, Item, Value as TomlValue};
 
 use crate::error::{Error, Result};
 use crate::policy::MergeMode;
-use crate::store::Store;
-use crate::tomltree::{apply_overlay, parse_document};
+use crate::store::{RecoverReport, Store};
+use crate::tomltree::{apply_overlay, collect_protected_leaves, parse_document};
 use crate::util;
 
 pub const COMMON_CONFIG_KEY: &str = "common_config_codex";
@@ -54,6 +54,25 @@ pub struct RestoreDbReport {
     // GitHub@Oxyg enA   ILab    |   O   xy   genAILab@Sta   rs ail sCl  over
     pub restored_from: PathBuf,
     pub pre_restore_backup: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RecoverCandidate {
+    pub provider_id: String,
+    pub provider_name: String,
+    pub is_current: bool,
+    pub protected_paths: usize,
+    pub config_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CcSwitchRecoverReport {
+    pub db_path: PathBuf,
+    pub dry_run: bool,
+    pub selected: Option<RecoverCandidate>,
+    pub candidates: Vec<RecoverCandidate>,
+    pub recover: Option<RecoverReport>,
+    pub warnings: Vec<String>,
 }
 
 /// Default CC Switch data directory: `~/.cc-switch/cc-switch.db`.
@@ -317,6 +336,117 @@ pub fn adopt(store: &Store, options: &AdoptOptions) -> Result<AdoptReport> {
     Ok(AdoptReport {
         backup: Some(backup),
         ..report
+    })
+}
+
+/// Choose the stored Codex provider config that protects the most user-owned
+/// paths and merge it into the live configuration.
+pub fn recover(
+    store: &Store,
+    db_path: Option<PathBuf>,
+    provider: Option<&str>,
+    apply: bool,
+) -> Result<CcSwitchRecoverReport> {
+    let db_path = match db_path {
+        Some(path) => path,
+        None => locate_db().ok_or_else(|| {
+            Error::CcSwitch(
+                "CC Switch database not found; pass --db <path> if it lives elsewhere".to_string(),
+            )
+        })?,
+    };
+    let connection = open_read_only(&db_path)?;
+    validate_schema(&connection)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT id, name, is_current, settings_config FROM providers
+             WHERE app_type = 'codex' ORDER BY sort_index",
+        )
+        .map_err(|e| cc_error(&db_path, e))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2).unwrap_or(0) != 0,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|e| cc_error(&db_path, e))?;
+
+    let mut candidates: Vec<(RecoverCandidate, String)> = Vec::new();
+    let mut warnings = Vec::new();
+    for row in rows {
+        let (id, name, is_current, settings) = row.map_err(|e| cc_error(&db_path, e))?;
+        let parsed: Value = serde_json::from_str(&settings).unwrap_or(Value::Null);
+        let Some(config_text) = parsed.get("config").and_then(Value::as_str) else {
+            warnings.push(format!("provider {name}: no config text"));
+            continue;
+        };
+        match parse_document(config_text, "<cc-switch provider config>") {
+            Ok(document) => {
+                let protected = collect_protected_leaves(&document, store.policy()).len();
+                candidates.push((
+                    RecoverCandidate {
+                        provider_id: id,
+                        provider_name: name,
+                        is_current,
+                        protected_paths: protected,
+                        config_bytes: config_text.len(),
+                    },
+                    config_text.to_string(),
+                ));
+            }
+            Err(error) => warnings.push(format!("provider {name}: {error}")),
+        }
+    }
+    candidates.sort_by(|a, b| {
+        b.0.protected_paths
+            .cmp(&a.0.protected_paths)
+            .then(b.0.is_current.cmp(&a.0.is_current))
+    });
+
+    let selected_index = match provider {
+        Some(wanted) => candidates
+            .iter()
+            .position(|(candidate, _)| {
+                candidate.provider_id.eq_ignore_ascii_case(wanted)
+                    || candidate.provider_name.eq_ignore_ascii_case(wanted)
+            })
+            .ok_or_else(|| {
+                Error::CcSwitch(format!(
+                    "provider '{wanted}' has no valid Codex config in {}",
+                    db_path.display()
+                ))
+            })?,
+        None => 0,
+    };
+    let candidate_list: Vec<RecoverCandidate> = candidates
+        .iter()
+        .map(|(candidate, _)| candidate.clone())
+        .collect();
+
+    let recover_report = if candidates.is_empty() {
+        warnings.push("no Codex provider configs with protected paths were found".to_string());
+        None
+    } else {
+        let (selected, config_text) = &candidates[selected_index];
+        let label = format!(
+            "CC Switch provider {} ({})",
+            selected.provider_name, selected.provider_id
+        );
+        Some(store.recover(config_text, &label, !apply)?)
+    };
+
+    Ok(CcSwitchRecoverReport {
+        db_path,
+        dry_run: !apply,
+        selected: candidates
+            .get(selected_index)
+            .map(|(candidate, _)| candidate.clone()),
+        candidates: candidate_list,
+        recover: recover_report,
+        warnings,
     })
 }
 

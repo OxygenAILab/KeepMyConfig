@@ -168,6 +168,14 @@ Excluded by default: `node_modules`, `.git`, `target`, `__pycache__`, zip files,
 and `plugins/cache/**`. Files above `max_file_bytes` (50 MiB) are skipped and
 counted in the report.
 
+`status` prints the last snapshot, and `doctor` warns when no snapshot exists
+or the newest one is older than 30 days. A hardlink snapshot is cheap on the
+same volume:
+
+```powershell
+keepmyconfig backup --assets all --link
+```
+
 ## 5. CC Switch integration
 
 ```powershell
@@ -183,6 +191,19 @@ keepmyconfig ccswitch restore --backup "$HOME\.codex\.keepmyconfig\backups\cc-sw
 Adopt validates the database shape (`settings`, `providers`, `mcp_servers`)
 instead of a version number, records `PRAGMA user_version`, and writes
 everything in one transaction after taking a consistent SQLite backup.
+
+When both the store baseline and Codex's own backups are gone, recover from the
+provider configs CC Switch keeps:
+
+```powershell
+keepmyconfig ccswitch recover                 # preview, picks the richest config
+keepmyconfig ccswitch recover --provider "Sails API"
+keepmyconfig ccswitch recover --apply
+```
+
+The command projects each stored config through the protection policy, picks
+the one with the most protected paths (current provider wins ties), merges it
+with `overlay_wins`, and takes a `pre-recover` backup before writing.
 
 ## 6. Detection scoring
 

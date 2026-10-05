@@ -164,12 +164,17 @@ pub fn uninstall(store: &Store) -> Result<AutostartReport> {
             ));
         }
     }
-    for wrapper in [&current.watch_wrapper, &current.check_wrapper] {
-        if wrapper.is_file() {
-            // GitHu b@Oxyge  nAILab | Oxyg enAILab@Stars  ailsClover
-            std::fs::remove_file(wrapper)
-                .with_context(|| format!("cannot remove {}", wrapper.display()))?;
-            details.push(format!("removed wrapper: {}", wrapper.display()));
+    let (launcher_ps1, launcher_vbs) = launcher_paths(&current);
+    for artifact in [
+        &current.watch_wrapper,
+        &current.check_wrapper,
+        &launcher_ps1,
+        &launcher_vbs,
+    ] {
+        if artifact.is_file() {
+            std::fs::remove_file(artifact)
+                .with_context(|| format!("cannot remove {}", artifact.display()))?;
+            details.push(format!("removed launcher: {}", artifact.display()));
         }
     }
     Ok(AutostartReport {
@@ -280,33 +285,61 @@ fn startup_loop_script(
     )
 }
 
+fn launcher_paths(current: &AutostartStatus) -> (PathBuf, PathBuf) {
+    let directory = current
+        .watch_wrapper
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    (
+        directory.join("launch-startup-loop.ps1"),
+        directory.join("launch-startup-loop.vbs"),
+    )
+}
+
+/// Start the Startup loop outside the caller's job object by asking the WMI
+/// service to create the process. `cmd /C start` and `DETACHED_PROCESS` still
+/// inherit the parent job on some hosts, which killed the helper as soon as
+/// the installer session ended.
 fn start_detached(current: &AutostartStatus) {
-    let mut command = Command::new("cmd");
+    let Some(startup_script) = current.startup_script.as_ref() else {
+        return;
+    };
+    let (launcher_ps1, launcher_vbs) = launcher_paths(current);
+    if util::atomic_write(&launcher_vbs, &hidden_launcher_vbs(startup_script)).is_err() {
+        return;
+    }
+    if util::atomic_write(&launcher_ps1, &wmi_launcher_ps1(&launcher_vbs)).is_err() {
+        return;
+    }
+    let mut command = Command::new("powershell");
     command
         .args([
-            "/C",
-            "start",
-            "",
-            "/min",
-            &current.executable.to_string_lossy(),
-            "--codex-home",
-            &current.codex_home.to_string_lossy(),
-            "--store",
-            &current.store_dir.to_string_lossy(),
-            "watch",
-            "--quiet",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
         ])
+        .arg(&launcher_ps1)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-    }
     let _ = command.spawn();
+}
+
+fn hidden_launcher_vbs(startup_script: &Path) -> String {
+    format!(
+        "Set sh = CreateObject(\"WScript.Shell\")\r\nq = Chr(34)\r\nsh.Run \"cmd.exe /c \" & q & q & \"{}\" & q & q, 0, False\r\n",
+        startup_script.display()
+    )
+}
+
+fn wmi_launcher_ps1(launcher_vbs: &Path) -> String {
+    format!(
+        "$cmd = 'wscript.exe \"\"{}\"\"'\r\nInvoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{{ CommandLine = $cmd }} | Out-Null\r\n",
+        launcher_vbs.display()
+    )
 }
 
 fn startup_script_path() -> Option<PathBuf> {
@@ -354,7 +387,7 @@ fn run_schtasks(args: &[&str]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{startup_loop_script, wrapper_script};
+    use super::{hidden_launcher_vbs, startup_loop_script, wmi_launcher_ps1, wrapper_script};
     use std::path::Path;
 
     #[test]
@@ -383,5 +416,16 @@ mod tests {
         assert!(script.contains("watch --once --quiet"));
         assert!(script.contains("timeout /t 300 /nobreak"));
         assert!(script.contains("goto loop"));
+    }
+
+    #[test]
+    fn launcher_uses_wmi_and_a_hidden_window() {
+        let vbs = hidden_launcher_vbs(Path::new(r"C:\Startup\KeepMyConfig.cmd"));
+        assert!(vbs.contains("Chr(34)"));
+        assert!(vbs.contains(", 0, False"));
+        let ps1 = wmi_launcher_ps1(Path::new(r"C:\Apps\launch-startup-loop.vbs"));
+        assert!(ps1.contains("Invoke-CimMethod"));
+        assert!(ps1.contains("wscript.exe"));
+        assert!(ps1.contains("launch-startup-loop.vbs"));
     }
 }

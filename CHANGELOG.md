@@ -7,6 +7,37 @@ and this project adheres to the BC version scheme (`v{Year}.{Major}-Alpha N`).
 
 ## [Unreleased]
 
+## [v26.0-Alpha.6] — 2026-10-05
+
+### Added
+
+- `ccswitch recover [--provider NAME] [--db FILE] [--apply]`: when local
+  backups are gone, scan the Codex provider configs stored in CC Switch, pick
+  the one protecting the most user-owned paths, and merge it into the live
+  config. Dry-run by default, pre-recover backup, journaled.
+- Asset-coverage tracking: `backup` records the last snapshot in `state.json`;
+  `status` prints it and `doctor` warns when no snapshot exists or it is older
+  than 30 days.
+
+### Fixed
+
+- The immediately started Startup helper now survives the installer session:
+  a hidden VBS launcher is created through the WMI service
+  (`Invoke-CimMethod Win32_Process Create`), so it is not a member of the
+  caller's job object. The previous `cmd /C start` + `DETACHED_PROCESS` helper
+  was killed when the session that installed it ended, leaving the machine
+  unprotected until the next logon.
+
+### Verified
+
+- Synthetic CC Switch database test: a minimal live config recovers MCP,
+  plugin, and desktop entries from the richest stored provider config; dry-run
+  writes nothing; `--provider` selection by name works.
+- Asset snapshot test: `state.json` records the snapshot files/bytes.
+- On the affected machine: the WMI-launched hidden loop is alive across
+  separate command sessions, and the first hardlink asset snapshot covers
+  skills and plugins.
+
 ## [v26.0-Alpha.5] — 2026-10-05
 
 ### Fixed
