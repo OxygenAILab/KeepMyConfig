@@ -48,6 +48,10 @@ ignored = [                   # app-owned churn: neither protected nor restored
   "notify",
 ]
 
+pinned = [                    # force these paths even inside a managed subtree
+  # "model_providers.SailsAPI.name",
+]
+
 [assets]
 dirs = ["skills", "plugins", "prompts", "rules"]
 files = ["config.toml", "AGENTS.md", "requirements.toml"]
@@ -73,6 +77,10 @@ max_file_bytes = 52428800
   conflicts. Use `live_wins` if you prefer newer Codex writes to survive.
 - `detection = "off"` disables automatic repair in `watch`; explicit `repair`
   still works.
+- `pinned` entries win over `managed` for exactly those paths, which is useful
+  for provider fields that must stay fixed (for example a third-party
+  provider's `name`). A pinned leaf is only applied when its parent table
+  exists, and removing one is treated as a clobber.
 
 ## 3. Daily workflow
 

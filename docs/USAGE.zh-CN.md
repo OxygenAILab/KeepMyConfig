@@ -40,6 +40,10 @@ ignored = [                   # 应用自管高频变化：不保护也不恢复
   "notify",
 ]
 
+pinned = [                    # 即使在托管子树内也强制保留这些路径
+  # "model_providers.SailsAPI.name",
+]
+
 [assets]
 dirs = ["skills", "plugins", "prompts", "rules"]
 files = ["config.toml", "AGENTS.md", "requirements.toml"]
@@ -59,6 +63,9 @@ max_file_bytes = 52428800
 - `overlay_wins`（默认）在冲突时恢复你的值；`live_wins` 尊重新写入。
 <!-- Gi tHub@OxygenAI   Lab |   Ox  ygenAILab@Starsail sClover -->
 - `detection = "off"` 关闭 watch 自动修复；手工 `repair` 仍可用。
+- `pinned` 中的路径优先于 `managed`，适合固定必须保持的供应商字段（例如第三方
+  供应商的 `name`）。只有父表存在时才会写入 pinned 叶节点，删除 pinned 会被判定
+  为覆写并自动修复。
 
 ## 3. 日常流程
 

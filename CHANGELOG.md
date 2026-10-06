@@ -7,6 +7,27 @@ and this project adheres to the BC version scheme (`v{Year}.{Major}-Alpha N`).
 
 ## [Unreleased]
 
+## [v26.0-Alpha.8] — 2026-10-06
+
+### Added
+
+- `pinned` policy list: exact paths that stay protected even inside a `managed`
+  subtree. Traversal descends into managed tables only where a pinned
+  descendant exists, a pinned leaf never resurrects a missing parent table, and
+  removing a pinned path is treated as a clobber so `watch` repairs it.
+
+### Verified
+
+- Reproduced the Codex 0.160 remote-compaction failure in a temporary
+  `CODEX_HOME`: a second turn with `model_auto_compact_token_limit = 2000`
+  failed with `remote compaction v2 expected exactly one compaction output item,
+  got 0 from 1 output items`.
+- The same session resumed successfully after changing the third-party
+  provider's `name` from `"OpenAI"` to `"SailsAPI"`, which routes compaction
+  through the local summarization path instead of remote compaction v2.
+- Pinned `model_providers.SailsAPI.name` survives a simulated CC Switch
+  rewrite and is restored by `watch`.
+
 ## [v26.0-Alpha.7] — 2026-10-05
 
 ### Changed

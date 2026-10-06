@@ -85,6 +85,9 @@ pub struct Policy {
     pub managed: Vec<String>,
     /// App-owned churn: neither protected nor restored.
     pub ignored: Vec<String>,
+    /// User-pinned overrides that win even inside a managed subtree (for
+    /// example `model_providers.SailsAPI.name`).
+    pub pinned: Vec<String>,
     pub assets: AssetPolicy,
 }
 
@@ -115,6 +118,7 @@ impl Default for Policy {
             // therefore neither protected nor restored. A hand-written `notify`
             // can be protected again by removing it from `ignored` in policy.toml.
             ignored: vec!["mcp_servers.node_repl".to_string(), "notify".to_string()],
+            pinned: Vec::new(),
             assets: AssetPolicy::default(),
         }
     }
@@ -155,16 +159,19 @@ pub struct CompiledPolicy {
     raw: Policy,
     managed: GlobSet,
     ignored: GlobSet,
+    pinned: GlobSet,
 }
 
 impl CompiledPolicy {
     pub fn compile(raw: Policy) -> Result<Self> {
         let managed = build_set(&raw.managed)?;
         let ignored = build_set(&raw.ignored)?;
+        let pinned = build_set(&raw.pinned)?;
         Ok(Self {
             raw,
             managed,
             ignored,
+            pinned,
         })
     }
 
@@ -191,8 +198,33 @@ impl CompiledPolicy {
         prefix_matches(&self.ignored, segments)
     }
 
+    /// Match the path or any of its ancestors against the pinned set.
+    pub fn is_pinned(&self, segments: &[String]) -> bool {
+        prefix_matches(&self.pinned, segments)
+    }
+
+    /// Whether a pinned pattern lives below this path. Traversal uses this to
+    /// descend into an otherwise-managed table that contains a pinned leaf.
+    pub fn has_pinned_descendant(&self, segments: &[String]) -> bool {
+        if self.raw.pinned.is_empty() {
+            return false;
+        }
+        if segments.is_empty() {
+            return true;
+        }
+        let rendered = render_segments(segments);
+        let prefix = format!("{rendered}.");
+        self.raw
+            .pinned
+            .iter()
+            .any(|pattern| pattern.starts_with(&prefix))
+    }
+
     pub fn is_protected(&self, segments: &[String]) -> bool {
-        !self.is_managed(segments) && !self.is_ignored(segments)
+        if self.is_ignored(segments) {
+            return false;
+        }
+        self.is_pinned(segments) || !self.is_managed(segments)
     }
 }
 
@@ -273,5 +305,21 @@ mod tests {
         assert_eq!(parsed.merge_mode, MergeMode::LiveWins);
         assert_eq!(parsed.detection, DetectionMode::Balanced);
         assert!(parsed.managed.contains(&"model".to_string()));
+    }
+
+    #[test]
+    fn pinned_overrides_win_inside_managed_subtrees() {
+        let policy = Policy {
+            pinned: vec!["model_providers.SailsAPI.name".to_string()],
+            ..Policy::default()
+        };
+        let compiled = policy.compile().unwrap();
+        assert!(compiled.is_pinned(&segments(&["model_providers", "SailsAPI", "name"])));
+        assert!(!compiled.is_pinned(&segments(&["model_providers", "SailsAPI"])));
+        assert!(compiled.has_pinned_descendant(&segments(&["model_providers"])));
+        assert!(compiled.has_pinned_descendant(&segments(&["model_providers", "SailsAPI"])));
+        assert!(!compiled.has_pinned_descendant(&segments(&["model_providers", "Other"])));
+        assert!(compiled.is_protected(&segments(&["model_providers", "SailsAPI", "name"])));
+        assert!(!compiled.is_protected(&segments(&["model_providers", "SailsAPI", "base_url"])));
     }
 }
