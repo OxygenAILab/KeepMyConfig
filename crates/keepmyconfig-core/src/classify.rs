@@ -16,6 +16,7 @@ pub struct DiffReport {
     pub missing_protected: Vec<String>,
     pub missing_pinned: Vec<String>,
     pub changed_protected: Vec<String>,
+    pub changed_pinned: Vec<String>,
     pub added_user_paths: Vec<String>,
     pub changed_managed: Vec<String>,
     /// Multi-entry tables (mcp_servers, plugins, marketplaces, projects) whose
@@ -83,6 +84,11 @@ pub fn diff_docs(
         .filter(|path| policy.is_pinned(&split_canonical_path(path)))
         .cloned()
         .collect();
+    let changed_pinned: Vec<String> = changed_protected
+        .iter()
+        .filter(|path| policy.is_pinned(&split_canonical_path(path)))
+        .cloned()
+        .collect();
 
     let mut added_user_paths = Vec::new();
     for path in live_protected.keys() {
@@ -131,6 +137,7 @@ pub fn diff_docs(
         missing_protected,
         missing_pinned,
         changed_protected,
+        changed_pinned,
         added_user_paths,
         changed_managed,
         whole_entries_removed,
@@ -182,6 +189,13 @@ pub fn classify(diff: &DiffReport, mode: DetectionMode) -> Classification {
         evidence.push(format!(
             "{} pinned override(s) removed",
             diff.missing_pinned.len()
+        ));
+    }
+    if !diff.changed_pinned.is_empty() {
+        score += 2;
+        evidence.push(format!(
+            "{} pinned override(s) rewritten",
+            diff.changed_pinned.len()
         ));
     }
     if !diff.changed_managed.is_empty() {
@@ -245,7 +259,9 @@ pub fn classify(diff: &DiffReport, mode: DetectionMode) -> Classification {
     if mode != DetectionMode::Off && app_updated && !diff.missing_protected.is_empty() {
         kind = ChangeKind::Clobber;
     }
-    if mode != DetectionMode::Off && !diff.missing_pinned.is_empty() {
+    if mode != DetectionMode::Off
+        && (!diff.missing_pinned.is_empty() || !diff.changed_pinned.is_empty())
+    {
         kind = ChangeKind::Clobber;
     }
     Classification {
@@ -605,5 +621,34 @@ args = ["serve"]
             .contains(&"model_providers.SailsAPI.name".to_string()));
         let classification = classify(&diff, DetectionMode::Balanced);
         assert_eq!(classification.kind, ChangeKind::Clobber);
+    }
+
+    #[test]
+    fn pinned_override_rewrite_forces_clobber() {
+        let policy = Policy {
+            pinned: vec!["model_providers.SailsAPI.name".to_string()],
+            ..Policy::default()
+        };
+        let policy = policy.compile().unwrap();
+        let baseline: DocumentMut =
+            "[model_providers.SailsAPI]\nname = \"SailsAPI\"\nbase_url = \"x\"\n"
+                .parse()
+                .unwrap();
+        let live: DocumentMut =
+            "[model_providers.SailsAPI]\nname = \"Renamed\"\nbase_url = \"x\"\n"
+                .parse()
+                .unwrap();
+        let diff = diff_docs(&baseline, &live, &policy, 100, 100);
+        assert_eq!(diff.changed_pinned, vec!["model_providers.SailsAPI.name"]);
+        // A pinned leaf is not also counted as a managed change.
+        assert!(diff.changed_managed.is_empty());
+        let classification = classify(&diff, DetectionMode::Balanced);
+        assert_eq!(classification.kind, ChangeKind::Clobber);
+        // The pinned override forces the verdict even though the generic score
+        // stays below the threshold.
+        assert!(classification
+            .evidence
+            .iter()
+            .any(|line| line.contains("pinned override(s) rewritten")));
     }
 }

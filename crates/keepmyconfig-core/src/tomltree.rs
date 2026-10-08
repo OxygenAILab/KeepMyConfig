@@ -91,12 +91,14 @@ fn walk_managed(
         Item::Table(table) => {
             for (key, child) in table.iter() {
                 segments.push(key.to_string());
-                walk_managed(child, segments, policy, out);
+                if !policy.is_pinned(segments) {
+                    walk_managed(child, segments, policy, out);
+                }
                 segments.pop();
             }
         }
         Item::ArrayOfTables(array) => {
-            if policy.is_managed(segments) && !array.is_empty() {
+            if policy.is_managed(segments) && !policy.is_pinned(segments) && !array.is_empty() {
                 for (index, table) in array.iter().enumerate() {
                     segments.push(format!("[{index}]"));
                     walk(&Item::Table(table.clone()), segments, None, out);
