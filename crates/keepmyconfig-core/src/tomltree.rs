@@ -84,19 +84,21 @@ fn walk_managed(
     match item {
         Item::None => {}
         Item::Value(value) => {
-            if policy.is_managed(segments) {
+            if policy.is_managed(segments) && !policy.is_pinned(segments) {
                 out.insert(render_segments(segments), render_value(value));
             }
         }
         Item::Table(table) => {
             for (key, child) in table.iter() {
                 segments.push(key.to_string());
-                walk_managed(child, segments, policy, out);
+                if !policy.is_pinned(segments) {
+                    walk_managed(child, segments, policy, out);
+                }
                 segments.pop();
             }
         }
         Item::ArrayOfTables(array) => {
-            if policy.is_managed(segments) && !array.is_empty() {
+            if policy.is_managed(segments) && !policy.is_pinned(segments) && !array.is_empty() {
                 for (index, table) in array.iter().enumerate() {
                     segments.push(format!("[{index}]"));
                     walk(&Item::Table(table.clone()), segments, None, out);
@@ -114,15 +116,17 @@ fn walk(
     policy: Option<&CompiledPolicy>,
     out: &mut Leaves,
 ) {
-    if let Some(policy) = policy {
-        if !policy.is_protected(segments) {
-            return;
-        }
+    let include_self = policy.map_or(true, |policy| policy.is_protected(segments));
+    let descend = policy.map_or(true, |policy| policy.has_pinned_descendant(segments));
+    if !include_self && !descend {
+        return;
     }
     match item {
         Item::None => {}
         Item::Value(value) => {
-            out.insert(render_segments(segments), render_value(value));
+            if include_self {
+                out.insert(render_segments(segments), render_value(value));
+            }
         }
         Item::Table(table) => {
             if table.is_empty() {
@@ -135,7 +139,7 @@ fn walk(
             }
         }
         Item::ArrayOfTables(array) => {
-            if array.is_empty() {
+            if !include_self || array.is_empty() {
                 return;
             }
             for (index, table) in array.iter().enumerate() {
@@ -165,14 +169,16 @@ pub fn project(doc: &DocumentMut, policy: &CompiledPolicy) -> Result<DocumentMut
 }
 
 fn project_item(item: &Item, segments: &mut Vec<String>, policy: &CompiledPolicy) -> Option<Item> {
-    if !policy.is_protected(segments) {
+    let include_self = policy.is_protected(segments);
+    let descend = policy.has_pinned_descendant(segments);
+    if !include_self && !descend {
         return None;
     }
     match item {
         Item::None => None,
-        Item::Value(value) => Some(Item::Value(value.clone())),
+        Item::Value(value) => include_self.then(|| Item::Value(value.clone())),
         Item::ArrayOfTables(array) => {
-            if array.is_empty() {
+            if !include_self || array.is_empty() {
                 None
             } else {
                 Some(Item::ArrayOfTables(array.clone()))
@@ -240,7 +246,9 @@ fn merge_item(
     mode: MergeMode,
     actions: &mut Vec<MergeAction>,
 ) {
-    if !policy.is_protected(segments) {
+    let include_self = policy.is_protected(segments);
+    let descend = policy.has_pinned_descendant(segments);
+    if !include_self && !descend {
         return;
     }
     match overlay {
@@ -248,6 +256,12 @@ fn merge_item(
         Item::Table(overlay_table) => {
             let live_exists = parent.get(key).is_some();
             if !live_exists {
+                // A managed parent that only carries a pinned leaf must not be
+                // resurrected as an incomplete table; pinned values are only
+                // meaningful while their parent exists.
+                if !include_self {
+                    return;
+                }
                 let item = Item::Table(overlay_table.clone());
                 record_subtree(&item, segments, actions);
                 parent.insert(key, item);
@@ -308,6 +322,9 @@ fn merge_item(
             let live_item = parent.get(key);
             match live_item {
                 None => {
+                    if !include_self {
+                        return;
+                    }
                     let item = Item::ArrayOfTables(overlay_array.clone());
                     record_subtree(&item, segments, actions);
                     parent.insert(key, item);
@@ -479,5 +496,70 @@ model_provider = "SailsAPI"
     fn leaf_collection_skips_empty_tables() {
         let doc = parse("[mcp_servers]\n");
         assert!(collect_protected_leaves(&doc, &compiled()).is_empty());
+    }
+
+    #[test]
+    fn pinned_leaf_survives_projection_and_merge() {
+        let policy = Policy {
+            pinned: vec!["model_providers.SailsAPI.name".to_string()],
+            ..Policy::default()
+        };
+        let policy = policy.compile().unwrap();
+        let baseline = parse(
+            r#"
+model = "x"
+
+[model_providers.SailsAPI]
+base_url = "http://proxy"
+name = "SailsAPI"
+wire_api = "responses"
+
+[plugins."pdf@openai-primary-runtime"]
+enabled = true
+"#,
+        );
+        let overlay = project(&baseline, &policy).unwrap();
+        let overlay_text = overlay.to_string();
+        assert!(overlay_text.contains("name = \"SailsAPI\""));
+        assert!(!overlay_text.contains("base_url"));
+        assert!(overlay_text.contains("plugins"));
+
+        let mut live = parse(
+            r#"
+model = "x"
+
+[model_providers.SailsAPI]
+base_url = "http://proxy"
+name = "OpenAI"
+wire_api = "responses"
+"#,
+        );
+        let actions = apply_overlay(&mut live, &overlay, &policy, MergeMode::OverlayWins);
+        assert_eq!(
+            live["model_providers"]["SailsAPI"]["name"].as_str(),
+            Some("SailsAPI")
+        );
+        assert!(actions.iter().any(|action| {
+            action.path == "model_providers.SailsAPI.name"
+                && action.kind == MergeActionKind::Overwritten
+        }));
+        assert_eq!(
+            live["model_providers"]["SailsAPI"]["base_url"].as_str(),
+            Some("http://proxy")
+        );
+    }
+
+    #[test]
+    fn pinned_leaf_does_not_resurrect_a_missing_managed_parent() {
+        let policy = Policy {
+            pinned: vec!["model_providers.SailsAPI.name".to_string()],
+            ..Policy::default()
+        };
+        let policy = policy.compile().unwrap();
+        let baseline = parse("[model_providers.SailsAPI]\nname = \"SailsAPI\"\n");
+        let overlay = project(&baseline, &policy).unwrap();
+        let mut live = parse("model = \"x\"\n");
+        apply_overlay(&mut live, &overlay, &policy, MergeMode::OverlayWins);
+        assert!(live.get("model_providers").is_none());
     }
 }
